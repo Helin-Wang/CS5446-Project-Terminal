@@ -21,6 +21,10 @@ starter-algo
  └──run.sh
 ```
 
+### Creating an Algo
+
+To create an algo, simply modify the `starter_algo.py` file.
+
 ### `algo_strategy.py`
 
 This file contains the `AlgoStrategy` class which you should modify to implement
