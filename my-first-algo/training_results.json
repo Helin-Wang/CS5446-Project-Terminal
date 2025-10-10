@@ -1,0 +1,18 @@
+{
+  "total_games": 1,
+  "wins": 0,
+  "losses": 1,
+  "draws": 0,
+  "win_rate": 0.0,
+  "total_time": 8.181352853775024,
+  "game_results": [
+    {
+      "result": "loss",
+      "winner": "player0",
+      "score": -1,
+      "game_num": 1,
+      "timestamp": 1760107685.56417
+    }
+  ],
+  "log_file": "/Users/wanghelin/Documents/course/CS5446/C1GamesStarterKit/my-first-algo/logs/rl_training_20251010_224758.json"
+}
