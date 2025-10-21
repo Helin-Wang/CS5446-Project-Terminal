@@ -1,0 +1,427 @@
+"""
+This module implements the PPO agent using neural networks.
+
+Replaces the previous Q-learning tabular approach with a neural network-based PPO agent.
+"""
+import torch
+import torch.nn as nn
+import os
+from rl.config import MACROS
+from rl.network import PPONetwork
+
+
+class Agent:
+    def __init__(self, model_path=None, obs_dim=6, action_dim=4, hidden_dim=64):
+        """
+        Initialize the PPO agent
+        
+        Args:
+            model_path: Path to load/save the model. If None, will initialize new model.
+            obs_dim: Observation dimension
+            action_dim: Action dimension (number of macros)
+            hidden_dim: Hidden layer dimension
+        """
+        self.obs_dim = obs_dim
+        self.action_dim = action_dim
+        self.hidden_dim = hidden_dim
+        
+        # Initialize the PPO network
+        self.network = PPONetwork(obs_dim=obs_dim, action_dim=action_dim, hidden_dim=hidden_dim)
+        
+        # Training statistics
+        self.steps = 0
+        self.episodes = 0
+        
+        # Load model if path is provided and file exists
+        if model_path is not None:
+            if os.path.exists(model_path):
+                self.load_model(model_path)
+                print(f"Model loaded from {model_path}")
+            else:
+                self.save_model(model_path)
+                print(f"No model found at {model_path}, using initialized network")
+        else:
+            print("Using newly initialized network")
+    
+    def act(self, state, deterministic=False):
+        """
+        Choose an action based on the current state
+        
+        Args:
+            state: Current observation state (can be dict, tuple, or tensor)
+            deterministic: If True, choose the most likely action
+            
+        Returns:
+            tuple: (action, log_prob, value) where action is int, log_prob and value are float
+        """
+        self.steps += 1
+        
+        # Convert state to tensor if needed
+        if isinstance(state, (dict, tuple)):
+            # Convert state to tensor (assuming it's a tuple/list of values)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)  # Add batch dimension
+        elif isinstance(state, torch.Tensor):
+            if state.dim() == 1:
+                state_tensor = state.unsqueeze(0)  # Add batch dimension
+            else:
+                state_tensor = state
+        else:
+            # Assume it's a list/array-like object
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        
+        # Get action from network
+        with torch.no_grad():  # No gradients needed for inference
+            action, log_prob, value = self.network.get_action(state_tensor, deterministic=deterministic)
+        
+        # Convert to Python types
+        return action.item(), log_prob.item(), value.item()
+    
+    def update(self, rollout_data):
+        """
+        Update the network parameters using PPO training logic
+        
+        Args:
+            rollout_data: List of episodes, where each episode is a list of transitions
+                         Each transition contains: state, action, reward, terminal, etc.
+        """
+        if not rollout_data:
+            print("No rollout data provided for training")
+            return
+        
+        # Process rollout data and perform PPO update
+        self._ppo_update(rollout_data)
+    
+    def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.2, value_clip_ratio=0.2, 
+                   learning_rate=3e-4, entropy_coef=0.01, value_coef=0.5, max_grad_norm=0.5,
+                   mini_batch_size=64):
+        """
+        Perform PPO update using rollout data with proper training design
+        
+        Args:
+            rollout_data: List of episodes containing transitions
+            ppo_epochs: Number of PPO update epochs
+            clip_ratio: PPO clipping ratio for policy
+            value_clip_ratio: Clipping ratio for value function
+            learning_rate: Learning rate
+            entropy_coef: Entropy regularization coefficient
+            value_coef: Value loss coefficient
+            max_grad_norm: Maximum gradient norm for clipping
+            mini_batch_size: Mini-batch size for training
+        """
+        import torch
+        import torch.nn.functional as F
+        import random
+        
+        # Set device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.network.to(device)
+        
+        # Set up optimizer (reuse if exists, otherwise create new)
+        if not hasattr(self, 'optimizer'):
+            self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
+        else:
+            # Update learning rate if changed
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = learning_rate
+        
+        # Process all episodes into a single batch
+        states, actions, rewards, terminals, old_log_probs, old_values = self._process_rollout_data(rollout_data)
+        
+        if len(states) == 0:
+            print("No valid transitions found in rollout data")
+            return
+        
+        # Convert to tensors and move to device
+        states = torch.FloatTensor(states).to(device)
+        actions = torch.LongTensor(actions).to(device)
+        rewards = torch.FloatTensor(rewards).to(device)
+        terminals = torch.BoolTensor(terminals).to(device)
+        old_log_probs = torch.FloatTensor(old_log_probs).to(device)
+        old_values = torch.FloatTensor(old_values).to(device)
+        
+        # Compute advantages and returns using GAE
+        advantages, returns = self._compute_advantages_returns(rewards, terminals, old_values)
+        advantages = advantages.to(device)
+        returns = returns.to(device)
+        
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        print(f"PPO Update: {len(states)} transitions, advantages range: [{advantages.min():.3f}, {advantages.max():.3f}]")
+        
+        # Create indices for mini-batch training
+        dataset_size = len(states)
+        indices = list(range(dataset_size))
+        
+        # Perform PPO updates with mini-batches
+        for epoch in range(ppo_epochs):
+            # Shuffle indices for each epoch
+            random.shuffle(indices)
+            
+            # Mini-batch training
+            for start_idx in range(0, dataset_size, mini_batch_size):
+                end_idx = min(start_idx + mini_batch_size, dataset_size)
+                batch_indices = indices[start_idx:end_idx]
+                
+                # Get mini-batch
+                batch_states = states[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_old_log_probs = old_log_probs[batch_indices]
+                batch_old_values = old_values[batch_indices]
+                batch_advantages = advantages[batch_indices]
+                batch_returns = returns[batch_indices]
+                
+                # Forward pass to get current policy and value estimates
+                log_probs, values, entropy = self.network.evaluate_actions(batch_states, batch_actions)
+                
+                # Compute ratios using stored old_log_probs
+                ratios = torch.exp(log_probs - batch_old_log_probs)
+                
+                # Compute policy loss (clipped)
+                surr1 = ratios * batch_advantages
+                surr2 = torch.clamp(ratios, 1 - clip_ratio, 1 + clip_ratio) * batch_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+                
+                # Compute value loss (with clipping)
+                value_pred_clipped = batch_old_values + torch.clamp(
+                    values - batch_old_values, -value_clip_ratio, value_clip_ratio
+                )
+                value_loss1 = F.mse_loss(values, batch_returns)
+                value_loss2 = F.mse_loss(value_pred_clipped, batch_returns)
+                value_loss = torch.max(value_loss1, value_loss2)
+                
+                # Compute entropy loss
+                entropy_loss = -entropy.mean()
+                
+                # Total loss
+                total_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
+                
+                # Backward pass
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                
+                # Gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.network.parameters(), max_grad_norm)
+                
+                self.optimizer.step()
+            
+            if epoch == 0:  # Print only first epoch
+                print(f"Epoch {epoch}: Policy Loss: {policy_loss:.4f}, Value Loss: {value_loss:.4f}, Entropy Loss: {entropy_loss:.4f}")
+        
+        print("PPO update completed")
+    
+    def _process_rollout_data(self, rollout_data):
+        """
+        Process rollout data into states, actions, rewards, terminals, log_probs, values
+        
+        Args:
+            rollout_data: List of episodes
+            
+        Returns:
+            states, actions, rewards, terminals, log_probs, values: Lists of processed data
+        """
+        states = []
+        actions = []
+        rewards = []
+        terminals = []
+        log_probs = []
+        values = []
+        
+        for episode in rollout_data:
+            if not episode:  # Skip empty episodes
+                continue
+                
+            for transition in episode:
+                states.append(transition['state'])
+                actions.append(transition['action'])
+                rewards.append(transition['reward'])
+                terminals.append(transition['terminal'])
+                
+                # Ensure log_prob and value are present (critical for PPO)
+                if 'log_prob' not in transition:
+                    raise ValueError(f"Missing log_prob in transition: {transition}")
+                if 'value' not in transition:
+                    raise ValueError(f"Missing value in transition: {transition}")
+                
+                log_probs.append(transition['log_prob'])
+                values.append(transition['value'])
+        
+        return states, actions, rewards, terminals, log_probs, values
+    
+    def _compute_advantages_returns(self, rewards, terminals, values, gamma=0.99, lam=0.95):
+        """
+        Compute advantages and returns using GAE (Generalized Advantage Estimation)
+        
+        Args:
+            rewards: Tensor of rewards
+            terminals: Tensor of terminal flags
+            values: Tensor of value estimates
+            gamma: Discount factor
+            lam: GAE lambda parameter
+            
+        Returns:
+            advantages, returns: Computed advantages and returns
+        """
+        import torch
+        
+        advantages = []
+        returns = []
+        
+        # Convert to numpy for easier manipulation
+        rewards = rewards.numpy()
+        terminals = terminals.numpy()
+        values = values.numpy()
+        
+        # Process each episode separately
+        episode_start = 0
+        for i in range(len(rewards)):
+            if terminals[i] or i == len(rewards) - 1:
+                # End of episode
+                episode_rewards = rewards[episode_start:i+1]
+                episode_terminals = terminals[episode_start:i+1]
+                episode_values = values[episode_start:i+1]
+                
+                # Compute TD errors: δ_t = r_t + γ * V(s_{t+1}) * (1-done) - V(s_t)
+                td_errors = []
+                for t in range(len(episode_rewards)):
+                    if t == len(episode_rewards) - 1:
+                        # Last step: bootstrap with 0 if terminal, otherwise use current value
+                        next_value = 0.0 if episode_terminals[t] else episode_values[t]
+                    else:
+                        next_value = episode_values[t + 1]
+                    
+                    td_error = episode_rewards[t] + gamma * next_value * (1 - episode_terminals[t]) - episode_values[t]
+                    td_errors.append(td_error)
+                
+                # Compute GAE advantages: A_t = δ_t + γλ(1-done)*A_{t+1}
+                episode_advantages = []
+                running_advantage = 0
+                
+                # Backward pass for GAE
+                for t in reversed(range(len(td_errors))):
+                    if t == len(td_errors) - 1:
+                        # Last step
+                        running_advantage = td_errors[t]
+                    else:
+                        # GAE: A_t = δ_t + γλ(1-done)*A_{t+1}
+                        running_advantage = td_errors[t] + gamma * lam * (1 - episode_terminals[t]) * running_advantage
+                    
+                    episode_advantages.append(running_advantage)
+                
+                # Reverse to get correct order
+                episode_advantages.reverse()
+                
+                # Compute returns: R_t = A_t + V(s_t)
+                episode_returns = [adv + val for adv, val in zip(episode_advantages, episode_values)]
+                
+                advantages.extend(episode_advantages)
+                returns.extend(episode_returns)
+                
+                episode_start = i + 1
+        
+        return torch.FloatTensor(advantages), torch.FloatTensor(returns)
+    
+    def save_model(self, filepath):
+        """
+        Save the neural network model using PyTorch's standard method
+        
+        Args:
+            filepath: Path to save the model
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # Save the model state dict and additional info
+            save_data = {
+                'model_state_dict': self.network.state_dict(),
+                'obs_dim': self.obs_dim,
+                'action_dim': self.action_dim,
+                'hidden_dim': self.hidden_dim,
+                'steps': self.steps,
+                'episodes': self.episodes
+            }
+            
+            torch.save(save_data, filepath)
+            print(f"Model saved to {filepath}")
+            return True
+            
+        except Exception as e:
+            print(f"Error saving model: {e}")
+            return False
+    
+    def load_model(self, filepath):
+        """
+        Load the neural network model using PyTorch's standard method
+        
+        Args:
+            filepath: Path to load the model from
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not os.path.exists(filepath):
+                print(f"Model file {filepath} not found")
+                return False
+            
+            # Load the saved data
+            save_data = torch.load(filepath, map_location='cpu', weights_only=False)
+            
+            # Load model state dict
+            self.network.load_state_dict(save_data['model_state_dict'])
+            
+            # Load additional info
+            self.obs_dim = save_data.get('obs_dim', self.obs_dim)
+            self.action_dim = save_data.get('action_dim', self.action_dim)
+            self.hidden_dim = save_data.get('hidden_dim', self.hidden_dim)
+            self.steps = save_data.get('steps', 0)
+            self.episodes = save_data.get('episodes', 0)
+            
+            print(f"Model loaded from {filepath}")
+            return True
+            
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            return False
+    
+    def set_training_mode(self, training=True):
+        """
+        Set the network to training or evaluation mode
+        
+        Args:
+            training: If True, set to training mode; if False, set to evaluation mode
+        """
+        if training:
+            self.network.train()
+        else:
+            self.network.eval()
+    
+    def get_action_probabilities(self, state):
+        """
+        Get action probabilities for the current state
+        
+        Args:
+            state: Current observation state
+            
+        Returns:
+            torch.Tensor: Action probabilities
+        """
+        # Convert state to tensor if needed
+        if isinstance(state, (dict, tuple)):
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        elif isinstance(state, torch.Tensor):
+            if state.dim() == 1:
+                state_tensor = state.unsqueeze(0)
+            else:
+                state_tensor = state
+        else:
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        
+        with torch.no_grad():
+            action_probs, value = self.network(state_tensor)
+        
+        return action_probs.squeeze(0)  # Remove batch dimension
