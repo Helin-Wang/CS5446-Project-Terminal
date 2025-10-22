@@ -565,7 +565,7 @@ if __name__ == "__main__":
         algo_path=current_dir,
         opponent_path=opponent_path,
         epochs=epochs,
-        save_interval=10
+        save_interval=100
     )
     
     # Start training
