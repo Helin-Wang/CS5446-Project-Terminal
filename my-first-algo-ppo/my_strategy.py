@@ -60,11 +60,11 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.last_action = None
         self.reward_tracker = RewardTracker()
         
-        # Initialize agent with model path
+        # Initialize agent with model path and CNN parameters
         model_path = os.path.join(os.path.dirname(__file__), "rl_model.pkl")
-        self.agent = Agent(model_path=model_path)
+        self.agent = Agent(model_path=model_path, board_channels=4, scalar_dim=7, action_dim=4, hidden_dim=128)
         
-        self.state = State()
+        self.state = State(config)
         self.macro_actions = MacroActions(config)
         self.game_ended = False
         
@@ -101,7 +101,13 @@ class AlgoStrategy(gamelib.AlgoCore):
             
             # 1. Build state from GameState
             current_state = self.state.build_state(game_state)
-            gamelib.debug_write(f"Current state: {current_state}")
+            # Convert tensors to lists for JSON serialization
+            board_tensor, scalar_tensor = current_state
+            state_for_logging = {
+                "board": board_tensor.tolist(),  # Convert to list for JSON serialization
+                "scalar": scalar_tensor.tolist()  # Convert to list for JSON serialization
+            }
+            gamelib.debug_write(f"Current state shape: board={board_tensor.shape}, scalar={scalar_tensor.shape}")
             if self.reward_tracker.my_last_hp is None or self.reward_tracker.opp_last_hp is None:
                 self.reward_tracker.reset(game_state)
             
@@ -125,9 +131,14 @@ class AlgoStrategy(gamelib.AlgoCore):
                 # Handle terminal state: log current turn data (reward will be calculated later)
                 if self.last_state is not None and self.last_action is not None:
                     # Log the terminal turn data (reward will be calculated in train_rl.py)
+                    # Convert last state to serializable format
+                    last_board, last_scalar = self.last_state
                     terminal_turn_data = {
                         "turn_num": game_state.turn_number - 1,  # Previous turn number
-                        "state": self.last_state,
+                        "state": {
+                            "board": last_board.tolist(),
+                            "scalar": last_scalar.tolist()
+                        },
                         "action": self.last_action,
                         "log_prob": getattr(self, 'last_log_prob', 0.0),  # Use stored log_prob
                         "value": getattr(self, 'last_value', 0.0),  # Use stored value
@@ -164,7 +175,7 @@ class AlgoStrategy(gamelib.AlgoCore):
             # 5. Cache current turn data for next turn logging
             self.current_turn_data = {
                 "turn_num": game_state.turn_number,
-                "state": current_state,
+                "state": state_for_logging,  # Use serializable state format
                 "action": action,
                 "log_prob": log_prob,  # Store log probability for PPO
                 "value": value,  # Store value for GAE calculation
@@ -231,7 +242,7 @@ class AlgoStrategy(gamelib.AlgoCore):
             with open(turn_log_file, 'a') as f:
                 f.write(json.dumps(turn_data) + '\n')
             
-            gamelib.debug_write(f"Logged turn: state={turn_data['state']}, action={turn_data['action']}, reward={turn_data['reward']}")
+            gamelib.debug_write(f"Logged turn: action={turn_data['action']}, reward={turn_data['reward']}, hp={turn_data['hp']}")
             
         except Exception as e:
             gamelib.debug_write(f"Error logging turn data: {e}")

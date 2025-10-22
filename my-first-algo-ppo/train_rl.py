@@ -347,8 +347,8 @@ class RLTrainer:
             sys.path.append(self.file_dir)
             from rl.agent import Agent
             
-            # Create agent with model path
-            agent = Agent(model_path=self.model_save_path)
+            # Create agent with model path and CNN parameters
+            agent = Agent(model_path=self.model_save_path, board_channels=4, scalar_dim=7, action_dim=4, hidden_dim=128)
             
             # Set to training mode
             agent.set_training_mode(True)

@@ -7,26 +7,28 @@ import torch
 import torch.nn as nn
 import os
 from rl.config import MACROS
-from rl.network import PPONetwork
+from rl.network import CNNPPONetwork
 
 
 class Agent:
-    def __init__(self, model_path=None, obs_dim=6, action_dim=4, hidden_dim=64):
+    def __init__(self, model_path=None, board_channels=4, scalar_dim=7, action_dim=4, hidden_dim=128):
         """
         Initialize the PPO agent
         
         Args:
             model_path: Path to load/save the model. If None, will initialize new model.
-            obs_dim: Observation dimension
+            board_channels: Number of board channels (4)
+            scalar_dim: Scalar features dimension (7)
             action_dim: Action dimension (number of macros)
             hidden_dim: Hidden layer dimension
         """
-        self.obs_dim = obs_dim
+        self.board_channels = board_channels
+        self.scalar_dim = scalar_dim
         self.action_dim = action_dim
         self.hidden_dim = hidden_dim
         
-        # Initialize the PPO network
-        self.network = PPONetwork(obs_dim=obs_dim, action_dim=action_dim, hidden_dim=hidden_dim)
+        # Initialize the CNN PPO network
+        self.network = CNNPPONetwork(board_channels=board_channels, scalar_dim=scalar_dim, action_dim=action_dim, hidden_dim=hidden_dim)
         
         # Set device and move network to appropriate device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -52,7 +54,7 @@ class Agent:
         Choose an action based on the current state
         
         Args:
-            state: Current observation state (can be dict, tuple, or tensor)
+            state: Current observation state (board_tensor, scalar_tensor)
             deterministic: If True, choose the most likely action
             
         Returns:
@@ -60,24 +62,25 @@ class Agent:
         """
         self.steps += 1
         
-        # Convert state to tensor if needed and move to correct device
+        # Extract board and scalar tensors from state
+        board_tensor, scalar_tensor = state
+        
+        # Move to correct device and add batch dimension
         device = self.device
         
-        if isinstance(state, (dict, tuple)):
-            # Convert state to tensor (assuming it's a tuple/list of values)
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)  # Add batch dimension and move to device
-        elif isinstance(state, torch.Tensor):
-            if state.dim() == 1:
-                state_tensor = state.unsqueeze(0).to(device)  # Add batch dimension and move to device
-            else:
-                state_tensor = state.to(device)  # Move to device
+        if board_tensor.dim() == 3:  # [channels, height, width]
+            board_tensor = board_tensor.unsqueeze(0).to(device)  # Add batch dimension
         else:
-            # Assume it's a list/array-like object
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+            board_tensor = board_tensor.to(device)
+            
+        if scalar_tensor.dim() == 1:  # [features]
+            scalar_tensor = scalar_tensor.unsqueeze(0).to(device)  # Add batch dimension
+        else:
+            scalar_tensor = scalar_tensor.to(device)
         
         # Get action from network
         with torch.no_grad():  # No gradients needed for inference
-            action, log_prob, value = self.network.get_action(state_tensor, deterministic=deterministic)
+            action, log_prob, value = self.network.get_action(board_tensor, scalar_tensor, deterministic=deterministic)
         
         # Convert to Python types
         return action.item(), log_prob.item(), value.item()
@@ -131,14 +134,15 @@ class Agent:
                 param_group['lr'] = learning_rate
         
         # Process all episodes into a single batch
-        states, actions, rewards, terminals, old_log_probs, old_values = self._process_rollout_data(rollout_data)
+        board_states, scalar_states, actions, rewards, terminals, old_log_probs, old_values = self._process_rollout_data(rollout_data)
         
-        if len(states) == 0:
+        if len(board_states) == 0:
             print("No valid transitions found in rollout data")
             return
         
         # Convert to tensors and move to device
-        states = torch.FloatTensor(states).to(device)
+        board_states = torch.stack(board_states).to(device)
+        scalar_states = torch.stack(scalar_states).to(device)
         actions = torch.LongTensor(actions).to(device)
         rewards = torch.FloatTensor(rewards).to(device)
         terminals = torch.BoolTensor(terminals).to(device)
@@ -153,10 +157,10 @@ class Agent:
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
-        print(f"PPO Update: {len(states)} transitions, advantages range: [{advantages.min():.3f}, {advantages.max():.3f}]")
+        print(f"PPO Update: {len(board_states)} transitions, advantages range: [{advantages.min():.3f}, {advantages.max():.3f}]")
         
         # Create indices for mini-batch training
-        dataset_size = len(states)
+        dataset_size = len(board_states)
         indices = list(range(dataset_size))
         
         # Perform PPO updates with mini-batches
@@ -170,7 +174,8 @@ class Agent:
                 batch_indices = indices[start_idx:end_idx]
                 
                 # Get mini-batch
-                batch_states = states[batch_indices]
+                batch_board_states = board_states[batch_indices]
+                batch_scalar_states = scalar_states[batch_indices]
                 batch_actions = actions[batch_indices]
                 batch_old_log_probs = old_log_probs[batch_indices]
                 batch_old_values = old_values[batch_indices]
@@ -178,7 +183,7 @@ class Agent:
                 batch_returns = returns[batch_indices]
                 
                 # Forward pass to get current policy and value estimates
-                log_probs, values, entropy = self.network.evaluate_actions(batch_states, batch_actions)
+                log_probs, values, entropy = self.network.evaluate_actions(batch_board_states, batch_scalar_states, batch_actions)
                 
                 # Compute ratios using stored old_log_probs
                 ratios = torch.exp(log_probs - batch_old_log_probs)
@@ -218,15 +223,16 @@ class Agent:
     
     def _process_rollout_data(self, rollout_data):
         """
-        Process rollout data into states, actions, rewards, terminals, log_probs, values
+        Process rollout data into board_states, scalar_states, actions, rewards, terminals, log_probs, values
         
         Args:
             rollout_data: List of episodes
             
         Returns:
-            states, actions, rewards, terminals, log_probs, values: Lists of processed data
+            board_states, scalar_states, actions, rewards, terminals, log_probs, values: Lists of processed data
         """
-        states = []
+        board_states = []
+        scalar_states = []
         actions = []
         rewards = []
         terminals = []
@@ -238,7 +244,23 @@ class Agent:
                 continue
                 
             for transition in episode:
-                states.append(transition['state'])
+                state = transition['state']
+                
+                # Convert serialized state back to tensors
+                if isinstance(state, dict) and 'board' in state and 'scalar' in state:
+                    # New CNN format: {"board": [...], "scalar": [...]}
+                    board_tensor = torch.FloatTensor(state['board'])
+                    scalar_tensor = torch.FloatTensor(state['scalar'])
+                    board_states.append(board_tensor)
+                    scalar_states.append(scalar_tensor)
+                elif isinstance(state, tuple) and len(state) == 2:
+                    # Direct tensor format (for testing)
+                    board_tensor, scalar_tensor = state
+                    board_states.append(board_tensor)
+                    scalar_states.append(scalar_tensor)
+                else:
+                    raise ValueError(f"Invalid state format: {type(state)} - {state}")
+                
                 actions.append(transition['action'])
                 rewards.append(transition['reward'])
                 terminals.append(transition['terminal'])
@@ -252,7 +274,7 @@ class Agent:
                 log_probs.append(transition['log_prob'])
                 values.append(transition['value'])
         
-        return states, actions, rewards, terminals, log_probs, values
+        return board_states, scalar_states, actions, rewards, terminals, log_probs, values
     
     def _compute_advantages_returns(self, rewards, terminals, values, gamma=0.99, lam=0.95):
         """
@@ -344,7 +366,8 @@ class Agent:
             # Save the model state dict and additional info
             save_data = {
                 'model_state_dict': self.network.state_dict(),
-                'obs_dim': self.obs_dim,
+                'board_channels': self.board_channels,
+                'scalar_dim': self.scalar_dim,
                 'action_dim': self.action_dim,
                 'hidden_dim': self.hidden_dim,
                 'steps': self.steps,
@@ -384,7 +407,8 @@ class Agent:
             self.network.to(self.device)
             
             # Load additional info
-            self.obs_dim = save_data.get('obs_dim', self.obs_dim)
+            self.board_channels = save_data.get('board_channels', self.board_channels)
+            self.scalar_dim = save_data.get('scalar_dim', self.scalar_dim)
             self.action_dim = save_data.get('action_dim', self.action_dim)
             self.hidden_dim = save_data.get('hidden_dim', self.hidden_dim)
             self.steps = save_data.get('steps', 0)
@@ -414,23 +438,21 @@ class Agent:
         Get action probabilities for the current state
         
         Args:
-            state: Current observation state
+            state: Current observation state (board_tensor, scalar_tensor)
             
         Returns:
             torch.Tensor: Action probabilities
         """
-        # Convert state to tensor if needed
-        if isinstance(state, (dict, tuple)):
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-        elif isinstance(state, torch.Tensor):
-            if state.dim() == 1:
-                state_tensor = state.unsqueeze(0)
-            else:
-                state_tensor = state
-        else:
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+        # Extract board and scalar tensors from state
+        board_tensor, scalar_tensor = state
+        
+        # Add batch dimension if needed
+        if board_tensor.dim() == 3:  # [channels, height, width]
+            board_tensor = board_tensor.unsqueeze(0)  # Add batch dimension
+        if scalar_tensor.dim() == 1:  # [features]
+            scalar_tensor = scalar_tensor.unsqueeze(0)  # Add batch dimension
         
         with torch.no_grad():
-            action_probs, value = self.network(state_tensor)
+            action_probs, value = self.network(board_tensor, scalar_tensor)
         
         return action_probs.squeeze(0)  # Remove batch dimension
