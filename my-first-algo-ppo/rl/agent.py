@@ -267,10 +267,10 @@ class Agent:
         advantages = []
         returns = []
         
-        # Convert to numpy for easier manipulation
-        rewards = rewards.numpy()
-        terminals = terminals.numpy()
-        values = values.numpy()
+        # Convert to numpy for easier manipulation (move to CPU first if on GPU)
+        rewards = rewards.cpu().numpy()
+        terminals = terminals.cpu().numpy()
+        values = values.cpu().numpy()
         
         # Process each episode separately
         episode_start = 0
