@@ -8,3 +8,5 @@
 
 *scripts/zipalgo_linux binary
 
+*checkpoints/*
+*.pkl
