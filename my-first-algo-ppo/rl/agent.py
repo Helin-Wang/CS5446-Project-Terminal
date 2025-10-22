@@ -95,10 +95,21 @@ class Agent:
         """
         if not rollout_data:
             print("No rollout data provided for training")
-            return
+            return {
+                'avg_policy_loss': 0.0,
+                'avg_value_loss': 0.0,
+                'avg_entropy_loss': 0.0,
+                'avg_total_loss': 0.0,
+                'epoch_losses': {
+                    'policy': [],
+                    'value': [],
+                    'entropy': [],
+                    'total': []
+                }
+            }
         
         # Process rollout data and perform PPO update
-        self._ppo_update(rollout_data)
+        return self._ppo_update(rollout_data)
     
     def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.2, value_clip_ratio=0.2, 
                    learning_rate=3e-4, entropy_coef=0.01, value_coef=0.5, max_grad_norm=0.5,
@@ -138,7 +149,18 @@ class Agent:
         
         if len(board_states) == 0:
             print("No valid transitions found in rollout data")
-            return
+            return {
+                'avg_policy_loss': 0.0,
+                'avg_value_loss': 0.0,
+                'avg_entropy_loss': 0.0,
+                'avg_total_loss': 0.0,
+                'epoch_losses': {
+                    'policy': [],
+                    'value': [],
+                    'entropy': [],
+                    'total': []
+                }
+            }
         
         # Convert to tensors and move to device
         board_states = torch.stack(board_states).to(device)
@@ -163,10 +185,23 @@ class Agent:
         dataset_size = len(board_states)
         indices = list(range(dataset_size))
         
+        # Track losses across all epochs
+        epoch_policy_losses = []
+        epoch_value_losses = []
+        epoch_entropy_losses = []
+        epoch_total_losses = []
+        
         # Perform PPO updates with mini-batches
         for epoch in range(ppo_epochs):
             # Shuffle indices for each epoch
             random.shuffle(indices)
+            
+            # Track losses for this epoch
+            epoch_policy_loss = 0.0
+            epoch_value_loss = 0.0
+            epoch_entropy_loss = 0.0
+            epoch_total_loss = 0.0
+            num_batches = 0
             
             # Mini-batch training
             for start_idx in range(0, dataset_size, mini_batch_size):
@@ -207,6 +242,13 @@ class Agent:
                 # Total loss
                 total_loss = policy_loss + value_coef * value_loss + entropy_coef * entropy_loss
                 
+                # Accumulate losses for this epoch
+                epoch_policy_loss += policy_loss.item()
+                epoch_value_loss += value_loss.item()
+                epoch_entropy_loss += entropy_loss.item()
+                epoch_total_loss += total_loss.item()
+                num_batches += 1
+                
                 # Backward pass
                 self.optimizer.zero_grad()
                 total_loss.backward()
@@ -216,10 +258,42 @@ class Agent:
                 
                 self.optimizer.step()
             
+            # Average losses for this epoch
+            avg_policy_loss = epoch_policy_loss / num_batches
+            avg_value_loss = epoch_value_loss / num_batches
+            avg_entropy_loss = epoch_entropy_loss / num_batches
+            avg_total_loss = epoch_total_loss / num_batches
+            
+            # Store epoch losses
+            epoch_policy_losses.append(avg_policy_loss)
+            epoch_value_losses.append(avg_value_loss)
+            epoch_entropy_losses.append(avg_entropy_loss)
+            epoch_total_losses.append(avg_total_loss)
+            
             if epoch == 0:  # Print only first epoch
-                print(f"Epoch {epoch}: Policy Loss: {policy_loss:.4f}, Value Loss: {value_loss:.4f}, Entropy Loss: {entropy_loss:.4f}")
+                print(f"Epoch {epoch}: Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}, Entropy Loss: {avg_entropy_loss:.4f}")
+        
+        # Calculate average losses across all epochs
+        avg_policy_loss = sum(epoch_policy_losses) / len(epoch_policy_losses)
+        avg_value_loss = sum(epoch_value_losses) / len(epoch_value_losses)
+        avg_entropy_loss = sum(epoch_entropy_losses) / len(epoch_entropy_losses)
+        avg_total_loss = sum(epoch_total_losses) / len(epoch_total_losses)
         
         print("PPO update completed")
+        
+        # Return loss information
+        return {
+            'avg_policy_loss': avg_policy_loss,
+            'avg_value_loss': avg_value_loss,
+            'avg_entropy_loss': avg_entropy_loss,
+            'avg_total_loss': avg_total_loss,
+            'epoch_losses': {
+                'policy': epoch_policy_losses,
+                'value': epoch_value_losses,
+                'entropy': epoch_entropy_losses,
+                'total': epoch_total_losses
+            }
+        }
     
     def _process_rollout_data(self, rollout_data):
         """

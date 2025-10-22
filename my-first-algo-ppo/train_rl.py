@@ -361,7 +361,7 @@ class RLTrainer:
             traceback.print_exc()
             return None
     
-    def _log_training_epoch(self, epoch, wins, losses, draws, win_rate, training_time, total_transitions, avg_enemy_hp):
+    def _log_training_epoch(self, epoch, wins, losses, draws, win_rate, training_time, total_transitions, avg_enemy_hp, loss_info=None):
         """
         Log training epoch statistics
         
@@ -374,6 +374,7 @@ class RLTrainer:
             training_time: Time taken for this epoch
             total_transitions: Total number of transitions used for training
             avg_enemy_hp: Average enemy HP at game end
+            loss_info: Dictionary containing loss information from agent.update()
         """
         log_entry = {
             "epoch": epoch,
@@ -388,6 +389,15 @@ class RLTrainer:
             "avg_enemy_hp": avg_enemy_hp
         }
         
+        # Add loss information if available
+        if loss_info is not None:
+            log_entry.update({
+                "avg_policy_loss": loss_info['avg_policy_loss'],
+                "avg_value_loss": loss_info['avg_value_loss'],
+                "avg_entropy_loss": loss_info['avg_entropy_loss'],
+                "avg_total_loss": loss_info['avg_total_loss']
+            })
+        
         # Append to training log file
         with open(self.training_log_path, 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
@@ -396,6 +406,10 @@ class RLTrainer:
         print(f"Epoch {epoch} Results: {wins}W-{losses}L-{draws}D")
         print(f"Epoch {epoch} Training Time: {training_time:.2f}s")
         print(f"Epoch {epoch} Total Transitions: {total_transitions}")
+        
+        # Print loss information if available
+        if loss_info is not None:
+            print(f"Epoch {epoch} Avg Losses - Policy: {loss_info['avg_policy_loss']:.4f}, Value: {loss_info['avg_value_loss']:.4f}, Entropy: {loss_info['avg_entropy_loss']:.4f}, Total: {loss_info['avg_total_loss']:.4f}")
     
     def get_training_summary(self):
         """
@@ -411,6 +425,10 @@ class RLTrainer:
         win_rates = []
         training_times = []
         avg_enemy_hps = []
+        avg_policy_losses = []
+        avg_value_losses = []
+        avg_entropy_losses = []
+        avg_total_losses = []
         
         with open(self.training_log_path, 'r') as f:
             for line in f:
@@ -420,6 +438,12 @@ class RLTrainer:
                     win_rates.append(log_entry['win_rate'])
                     training_times.append(log_entry['training_time_seconds'])
                     avg_enemy_hps.append(log_entry.get('avg_enemy_hp', 0.0))
+                    
+                    # Add loss information if available
+                    avg_policy_losses.append(log_entry.get('avg_policy_loss', 0.0))
+                    avg_value_losses.append(log_entry.get('avg_value_loss', 0.0))
+                    avg_entropy_losses.append(log_entry.get('avg_entropy_loss', 0.0))
+                    avg_total_losses.append(log_entry.get('avg_total_loss', 0.0))
                 except (json.JSONDecodeError, KeyError):
                     continue
         
@@ -436,7 +460,19 @@ class RLTrainer:
             "average_training_time": sum(training_times) / len(training_times),
             "latest_avg_enemy_hp": avg_enemy_hps[-1],
             "average_enemy_hp": sum(avg_enemy_hps) / len(avg_enemy_hps),
-            "win_rate_trend": "improving" if len(win_rates) > 1 and win_rates[-1] > win_rates[0] else "declining" if len(win_rates) > 1 and win_rates[-1] < win_rates[0] else "stable"
+            "win_rate_trend": "improving" if len(win_rates) > 1 and win_rates[-1] > win_rates[0] else "declining" if len(win_rates) > 1 and win_rates[-1] < win_rates[0] else "stable",
+            # Loss statistics
+            "latest_avg_policy_loss": avg_policy_losses[-1] if avg_policy_losses else 0.0,
+            "latest_avg_value_loss": avg_value_losses[-1] if avg_value_losses else 0.0,
+            "latest_avg_entropy_loss": avg_entropy_losses[-1] if avg_entropy_losses else 0.0,
+            "latest_avg_total_loss": avg_total_losses[-1] if avg_total_losses else 0.0,
+            "average_policy_loss": sum(avg_policy_losses) / len(avg_policy_losses) if avg_policy_losses else 0.0,
+            "average_value_loss": sum(avg_value_losses) / len(avg_value_losses) if avg_value_losses else 0.0,
+            "average_entropy_loss": sum(avg_entropy_losses) / len(avg_entropy_losses) if avg_entropy_losses else 0.0,
+            "average_total_loss": sum(avg_total_losses) / len(avg_total_losses) if avg_total_losses else 0.0,
+            "best_policy_loss": min(avg_policy_losses) if avg_policy_losses else 0.0,
+            "best_value_loss": min(avg_value_losses) if avg_value_losses else 0.0,
+            "best_total_loss": min(avg_total_losses) if avg_total_losses else 0.0
         }
         
         return summary
@@ -462,6 +498,24 @@ class RLTrainer:
         print(f"Latest Avg Enemy HP: {summary['latest_avg_enemy_hp']:.1f}")
         print(f"Average Enemy HP: {summary['average_enemy_hp']:.1f}")
         print(f"Win Rate Trend: {summary['win_rate_trend']}")
+        
+        # Print loss information if available
+        if summary['latest_avg_total_loss'] > 0:
+            print("\n" + "-" * 30)
+            print("LOSS STATISTICS")
+            print("-" * 30)
+            print(f"Latest Policy Loss: {summary['latest_avg_policy_loss']:.4f}")
+            print(f"Latest Value Loss: {summary['latest_avg_value_loss']:.4f}")
+            print(f"Latest Entropy Loss: {summary['latest_avg_entropy_loss']:.4f}")
+            print(f"Latest Total Loss: {summary['latest_avg_total_loss']:.4f}")
+            print(f"Average Policy Loss: {summary['average_policy_loss']:.4f}")
+            print(f"Average Value Loss: {summary['average_value_loss']:.4f}")
+            print(f"Average Entropy Loss: {summary['average_entropy_loss']:.4f}")
+            print(f"Average Total Loss: {summary['average_total_loss']:.4f}")
+            print(f"Best Policy Loss: {summary['best_policy_loss']:.4f}")
+            print(f"Best Value Loss: {summary['best_value_loss']:.4f}")
+            print(f"Best Total Loss: {summary['best_total_loss']:.4f}")
+        
         print("=" * 50)
     
     def train(self):
@@ -516,9 +570,10 @@ class RLTrainer:
                 continue
             
             # 2.2 Update Agent with Rollout Data
+            loss_info = None
             if rollout_data:
                 print(f"Updating agent with {len(rollout_data)} episodes")
-                agent.update(rollout_data)
+                loss_info = agent.update(rollout_data)
             else:
                 print("No rollout data available for training")
             
@@ -536,7 +591,7 @@ class RLTrainer:
             training_time = end_time - start_time
             
             # Log training epoch statistics
-            self._log_training_epoch(epoch, self.wins, self.losses, self.draws, win_rate, training_time, total_transitions, avg_enemy_hp)
+            self._log_training_epoch(epoch, self.wins, self.losses, self.draws, win_rate, training_time, total_transitions, avg_enemy_hp, loss_info)
         
         # Print final training summary
         self.print_training_summary()
