@@ -28,6 +28,10 @@ class Agent:
         # Initialize the PPO network
         self.network = PPONetwork(obs_dim=obs_dim, action_dim=action_dim, hidden_dim=hidden_dim)
         
+        # Set device and move network to appropriate device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.network.to(self.device)
+        
         # Training statistics
         self.steps = 0
         self.episodes = 0
@@ -56,18 +60,20 @@ class Agent:
         """
         self.steps += 1
         
-        # Convert state to tensor if needed
+        # Convert state to tensor if needed and move to correct device
+        device = self.device
+        
         if isinstance(state, (dict, tuple)):
             # Convert state to tensor (assuming it's a tuple/list of values)
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)  # Add batch dimension
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)  # Add batch dimension and move to device
         elif isinstance(state, torch.Tensor):
             if state.dim() == 1:
-                state_tensor = state.unsqueeze(0)  # Add batch dimension
+                state_tensor = state.unsqueeze(0).to(device)  # Add batch dimension and move to device
             else:
-                state_tensor = state
+                state_tensor = state.to(device)  # Move to device
         else:
             # Assume it's a list/array-like object
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
         
         # Get action from network
         with torch.no_grad():  # No gradients needed for inference
@@ -112,8 +118,8 @@ class Agent:
         import torch.nn.functional as F
         import random
         
-        # Set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Set device and ensure network is on correct device
+        device = self.device
         self.network.to(device)
         
         # Set up optimizer (reuse if exists, otherwise create new)
@@ -373,6 +379,9 @@ class Agent:
             
             # Load model state dict
             self.network.load_state_dict(save_data['model_state_dict'])
+            
+            # Move network to correct device after loading
+            self.network.to(self.device)
             
             # Load additional info
             self.obs_dim = save_data.get('obs_dim', self.obs_dim)

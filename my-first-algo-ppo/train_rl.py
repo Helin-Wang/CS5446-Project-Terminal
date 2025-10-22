@@ -50,8 +50,9 @@ class RLTrainer:
         # Training log path
         self.training_log_path = os.path.join(self.file_dir, "logs", "training_log.jsonl")
         
-        # Ensure logs directory exists
+        # Ensure logs and checkpoints directories exist
         os.makedirs(os.path.join(self.file_dir, "logs"), exist_ok=True)
+        os.makedirs(os.path.join(self.file_dir, "checkpoints"), exist_ok=True)
         
     def _get_default_opponent(self):
         """Get default opponent path"""
@@ -526,11 +527,10 @@ class RLTrainer:
             print(f"Agent saved to {self.model_save_path}")
 
             
-            # 2.4 Save checkpoint every 100 epochs
-            if epoch % 100 == 0:
+            # 2.4 Save checkpoint at specified intervals
+            if epoch % self.save_interval == 0:
                 checkpoint_name = f"checkpoint_epoch_{epoch}.pkl"
-                agent.save_model(checkpoint_name)
-                print(f"Checkpoint saved: {checkpoint_name}")
+                self.save_model(epoch, checkpoint_name)
         
             end_time = time.time()
             training_time = end_time - start_time
