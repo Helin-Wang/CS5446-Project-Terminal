@@ -6,7 +6,7 @@ import numpy as np
 
 class CNNPPONetwork(nn.Module):
     
-    def __init__(self, board_channels=4, scalar_dim=7, action_dim=4, hidden_dim=128):
+    def __init__(self, board_channels=4, scalar_dim=7, action_dim=3, hidden_dim=128):
         super(CNNPPONetwork, self).__init__()
         
         self.board_channels = board_channels
@@ -146,6 +146,6 @@ class CNNPPONetwork(nn.Module):
 
 # Legacy compatibility - keep the old class name for now
 class PPONetwork(CNNPPONetwork):
-    def __init__(self, obs_dim=6, action_dim=4, hidden_dim=64):
+    def __init__(self, obs_dim=6, action_dim=3, hidden_dim=64):
         # Convert old interface to new CNN interface
         super().__init__(board_channels=4, scalar_dim=7, action_dim=action_dim, hidden_dim=hidden_dim)

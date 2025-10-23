@@ -57,9 +57,9 @@ class RLTrainer:
     def _get_default_opponent(self):
         """Get default opponent path"""
         if self.is_windows:
-            return os.path.join(self.parent_dir, "python-algo", "run.ps1")
+            return os.path.join(self.parent_dir, "python-algo-weak", "run.ps1")
         else:
-            return os.path.join(self.parent_dir, "python-algo", "run.sh")
+            return os.path.join(self.parent_dir, "python-algo-weak", "run.sh")
     
     def _prepare_algo_paths(self):
         """Prepare algorithm paths for execution"""
