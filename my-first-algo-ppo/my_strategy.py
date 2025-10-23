@@ -95,6 +95,12 @@ class AlgoStrategy(gamelib.AlgoCore):
         game_state.submit_turn()
     
     def my_strategy(self, game_state):
+        # Place basic defenses
+        self.build_defences(game_state)
+        
+        # Build reactive defenses based on where the enemy scored
+        self.build_reactive_defense(game_state)
+        
         try:
             # Debug: Log turn info
             gamelib.debug_write(f"RL Turn {game_state.turn_number}: HP={game_state.my_health}, MP={game_state.get_resource(1)}, SP={game_state.get_resource(0)}")
@@ -155,11 +161,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         
        
             
-        # Place basic defenses
-        self.build_defences(game_state)
         
-        # Build reactive defenses based on where the enemy scored
-        self.build_reactive_defense(game_state)
     
     def reset_for_new_game(self):
         """

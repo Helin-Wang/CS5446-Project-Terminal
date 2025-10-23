@@ -109,7 +109,7 @@ class Agent:
         return self._ppo_update(rollout_data)
     
     def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.1, value_clip_ratio=0.2, 
-                   learning_rate=3e-4, entropy_coef=0.1, value_coef=0.5, max_grad_norm=0.5,
+                   learning_rate=1e-4, entropy_coef=0.1, value_coef=0.1, max_grad_norm=0.5,
                    mini_batch_size=64):
         """
         Perform PPO update using rollout data with proper training design
@@ -372,7 +372,7 @@ class Agent:
         values = values.cpu().numpy()
         
         # Scaling to reduce the range of Value Loss
-        rewards = rewards / 10.0
+        rewards = rewards / 20.0
         
         # Process each episode separately
         episode_start = 0
