@@ -41,13 +41,11 @@ class MacroActions:
     def scout_flood(self,game_state):
         # They don't have many units in the front so lets figure out their least defended area and send Scouts there.
 
-        # Only spawn Scouts every other turn
+        # Spawn Scouts every turn for consistent attack behavior
         # Sending more at once is better since attacks can only hit a single scout at a time
-        if game_state.turn_number % 2 == 1:
-            # To simplify we will just check sending them from back left and right
-            scout_spawn_location_options = [[13, 0], [14, 0]]
-            best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
-            game_state.attempt_spawn(SCOUT, best_location, 1000)
+        scout_spawn_location_options = [[13, 0], [14, 0]]
+        best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
+        game_state.attempt_spawn(SCOUT, best_location, 1000)
 
         # Lastly, if we have spare SP, let's build some supports
         support_locations = [[13, 2], [14, 2], [13, 3], [14, 3]]

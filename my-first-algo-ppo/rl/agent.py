@@ -38,43 +38,12 @@ class Agent:
         # Training statistics
         self.steps = 0
         self.episodes = 0
-        self.training_step = 0
-        
-        # Learning rate scheduling parameters
-        self.warmup_steps = 50     # Warmup period: 50 epochs (5% of 1000 epochs)
-        self.max_steps = 1000      # Total training steps: 1000 epochs
-        
-        # Learning rate parameters
-        self.policy_lr_max = 3e-4
-        self.value_lr_max = 1e-4
-        self.policy_lr_min = 1e-5
-        self.value_lr_min = 1e-6
         
         # Load model if path is provided and file exists
         if model_path is not None:
             if os.path.exists(model_path):
                 self.load_model(model_path)
     
-    def _get_learning_rates(self):
-        """
-        Calculate current learning rates based on training step with warmup and decay
-        """
-        if self.training_step < self.warmup_steps:
-            # Warmup period: linearly increase from 0 to max
-            warmup_factor = self.training_step / self.warmup_steps
-            policy_lr = self.policy_lr_max * warmup_factor
-            value_lr = self.value_lr_max * warmup_factor
-        else:
-            # After warmup: cosine decay from max to min
-            progress = (self.training_step - self.warmup_steps) / (self.max_steps - self.warmup_steps)
-            progress = min(progress, 1.0)  # Clamp to 1.0
-            
-            # Cosine decay
-            decay_factor = 0.5 * (1 + np.cos(np.pi * progress))
-            policy_lr = self.policy_lr_min + (self.policy_lr_max - self.policy_lr_min) * decay_factor
-            value_lr = self.value_lr_min + (self.value_lr_max - self.value_lr_min) * decay_factor
-        
-        return policy_lr, value_lr
     
     def act(self, state, deterministic=False):
         """
@@ -121,7 +90,8 @@ class Agent:
                          Each transition contains: state, action, reward, terminal, etc.
         """
         if not rollout_data:
-            print("No rollout data provided for training")
+            import sys
+            print("No rollout data provided for training", file=sys.stderr)
             return {
                 'avg_policy_loss': 0.0,
                 'avg_value_loss': 0.0,
@@ -138,8 +108,8 @@ class Agent:
         # Process rollout data and perform PPO update
         return self._ppo_update(rollout_data)
     
-    def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.2, value_clip_ratio=0.2, 
-                   entropy_coef=0.01, value_coef=0.5, max_grad_norm=0.5,
+    def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.1, value_clip_ratio=0.2, 
+                   learning_rate=3e-4, entropy_coef=0.1, value_coef=0.5, max_grad_norm=0.5,
                    mini_batch_size=64):
         """
         Perform PPO update using rollout data with proper training design
@@ -147,9 +117,9 @@ class Agent:
         Args:
             rollout_data: List of episodes containing transitions
             ppo_epochs: Number of PPO update epochs
-            clip_ratio: PPO clipping ratio for policy
+            clip_ratio: PPO clipping ratio for policy (reduced from 0.2 to 0.1 for more policy updates)
             value_clip_ratio: Clipping ratio for value function
-            entropy_coef: Entropy regularization coefficient
+            entropy_coef: Entropy regularization coefficient (increased from 0.01 to 0.1 for more exploration)
             value_coef: Value loss coefficient
             max_grad_norm: Maximum gradient norm for clipping
             mini_batch_size: Mini-batch size for training
@@ -162,37 +132,20 @@ class Agent:
         device = self.device
         self.network.to(device)
         
-        # Get current learning rates with scheduling
-        policy_lr, value_lr = self._get_learning_rates()
-        print(f"Training step {self.training_step}: Policy LR={policy_lr:.2e}, Value LR={value_lr:.2e}")
-        
-        # Set up optimizer with separate parameter groups for different learning rates
+        # Set up optimizer (reuse if exists, otherwise create new)
         if not hasattr(self, 'optimizer'):
-            # Create parameter groups with different learning rates
-            param_groups = [
-                {'params': list(self.network.actor.parameters()), 'lr': policy_lr, 'name': 'policy'},
-                {'params': list(self.network.critic.parameters()), 'lr': value_lr, 'name': 'value'},
-                {'params': list(self.network.shared_layers.parameters()), 'lr': policy_lr, 'name': 'shared'}  # Use policy LR for shared layers
-            ]
-            self.optimizer = torch.optim.Adam(param_groups)
+            self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate)
         else:
-            # Update learning rates for existing parameter groups
+            # Update learning rate if changed
             for param_group in self.optimizer.param_groups:
-                if param_group['name'] == 'policy':
-                    param_group['lr'] = policy_lr
-                elif param_group['name'] == 'value':
-                    param_group['lr'] = value_lr
-                elif param_group['name'] == 'shared':
-                    param_group['lr'] = policy_lr
-        
-        # Increment training step
-        self.training_step += 1
+                param_group['lr'] = learning_rate
         
         # Process all episodes into a single batch
         board_states, scalar_states, actions, rewards, terminals, old_log_probs, old_values = self._process_rollout_data(rollout_data)
         
         if len(board_states) == 0:
-            print("No valid transitions found in rollout data")
+            import sys
+            print("No valid transitions found in rollout data", file=sys.stderr)
             return {
                 'avg_policy_loss': 0.0,
                 'avg_value_loss': 0.0,
@@ -223,7 +176,8 @@ class Agent:
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
-        print(f"PPO Update: {len(board_states)} transitions, advantages range: [{advantages.min():.3f}, {advantages.max():.3f}]")
+        import sys
+        print(f"PPO Update: {len(board_states)} transitions, advantages range: [{advantages.min():.3f}, {advantages.max():.3f}]", file=sys.stderr)
         
         # Create indices for mini-batch training
         dataset_size = len(board_states)
@@ -312,7 +266,8 @@ class Agent:
             epoch_total_losses.append(avg_total_loss)
             
             if epoch == 0:  # Print only first epoch
-                print(f"Epoch {epoch}: Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}, Entropy Loss: {avg_entropy_loss:.4f}")
+                import sys
+                print(f"Epoch {epoch}: Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}, Entropy Loss: {avg_entropy_loss:.4f}", file=sys.stderr)
         
         # Calculate average losses across all epochs
         avg_policy_loss = sum(epoch_policy_losses) / len(epoch_policy_losses)
@@ -320,7 +275,8 @@ class Agent:
         avg_entropy_loss = sum(epoch_entropy_losses) / len(epoch_entropy_losses)
         avg_total_loss = sum(epoch_total_losses) / len(epoch_total_losses)
         
-        print("PPO update completed")
+        import sys
+        print("PPO update completed", file=sys.stderr)
         
         # Return loss information
         return {
@@ -415,6 +371,9 @@ class Agent:
         terminals = terminals.cpu().numpy()
         values = values.cpu().numpy()
         
+        # Scaling to reduce the range of Value Loss
+        rewards = rewards / 10.0
+        
         # Process each episode separately
         episode_start = 0
         for i in range(len(rewards)):
@@ -486,16 +445,17 @@ class Agent:
                 'action_dim': self.action_dim,
                 'hidden_dim': self.hidden_dim,
                 'steps': self.steps,
-                'episodes': self.episodes,
-                'training_step': self.training_step
+                'episodes': self.episodes
             }
             
             torch.save(save_data, filepath)
-            print(f"Model saved to {filepath}")
+            import sys
+            print(f"Model saved to {filepath}", file=sys.stderr)
             return True
             
         except Exception as e:
-            print(f"Error saving model: {e}")
+            import sys
+            print(f"Error saving model: {e}", file=sys.stderr)
             return False
     
     def load_model(self, filepath):
@@ -510,7 +470,8 @@ class Agent:
         """
         try:
             if not os.path.exists(filepath):
-                print(f"Model file {filepath} not found")
+                import sys
+                print(f"Model file {filepath} not found", file=sys.stderr)
                 return False
             
             # Load the saved data
@@ -529,13 +490,14 @@ class Agent:
             self.hidden_dim = save_data.get('hidden_dim', self.hidden_dim)
             self.steps = save_data.get('steps', 0)
             self.episodes = save_data.get('episodes', 0)
-            self.training_step = save_data.get('training_step', 0)
             
-            print(f"Model loaded from {filepath}")
+            import sys
+            print(f"Model loaded from {filepath}", file=sys.stderr)
             return True
             
         except Exception as e:
-            print(f"Error loading model: {e}")
+            import sys
+            print(f"Error loading model: {e}", file=sys.stderr)
             return False
     
     def set_training_mode(self, training=True):
@@ -558,7 +520,7 @@ class Agent:
             state: Current observation state (board_tensor, scalar_tensor)
             
         Returns:
-            torch.Tensor: Action probabilities
+            torch.Tensor: Action probabilities (converted from logits)
         """
         # Extract board and scalar tensors from state
         board_tensor, scalar_tensor = state
@@ -570,6 +532,7 @@ class Agent:
             scalar_tensor = scalar_tensor.unsqueeze(0)  # Add batch dimension
         
         with torch.no_grad():
-            action_probs, value = self.network(board_tensor, scalar_tensor)
+            action_logits, value = self.network(board_tensor, scalar_tensor)
+            action_probs = torch.softmax(action_logits, dim=-1)
         
         return action_probs.squeeze(0)  # Remove batch dimension

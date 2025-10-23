@@ -116,55 +116,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                 self._log_turn_data(self.current_turn_data)
                 self.turn_data_logged = True
             
-            # 2. Check for terminal state and apply terminal reward if game ended
-            if self.state.is_terminal_state(game_state):
-                gamelib.debug_write(f"Terminal state detected: my_health={game_state.my_health}, enemy_health={game_state.enemy_health}")
-                
-                # Determine game result
-                if game_state.my_health > game_state.enemy_health:
-                    result = 'win'
-                elif game_state.my_health < game_state.enemy_health:
-                    result = 'loss'
-                else:
-                    result = 'draw'
-                
-                # Handle terminal state: log current turn data (reward will be calculated later)
-                if self.last_state is not None and self.last_action is not None:
-                    # Log the terminal turn data (reward will be calculated in train_rl.py)
-                    # Convert last state to serializable format
-                    last_board, last_scalar = self.last_state
-                    terminal_turn_data = {
-                        "turn_num": game_state.turn_number - 1,  # Previous turn number
-                        "state": {
-                            "board": last_board.tolist(),
-                            "scalar": last_scalar.tolist()
-                        },
-                        "action": self.last_action,
-                        "log_prob": getattr(self, 'last_log_prob', 0.0),  # Use stored log_prob
-                        "value": getattr(self, 'last_value', 0.0),  # Use stored value
-                        "reward": 0.0,  # Will be calculated later
-                        "hp": game_state.my_health,
-                        "enemy_hp": game_state.enemy_health,
-                        "terminal": True  # Mark as terminal state
-                    }
-                    self._log_turn_data(terminal_turn_data)
-                
-                
-                # Save the trained model
-                # self.save_model(model_name="rl_model.pkl")
-                # self.save_model(model_name=f"rl_model_{self.game_num}.pkl")
-                
-                # # Save checkpoint every 10 games
-                # if self.game_num % 10 == 0:
-                #     checkpoint_name = f"checkpoint_game_{self.game_num}.pkl"
-                #     self.save_model(model_name=checkpoint_name)
-                #     gamelib.debug_write(f"Checkpoint saved: {checkpoint_name}")
-                
-                # Mark game as ended and reset for next game
-                self.game_ended = True
-                self.reset_for_new_game()
-                return
-            
             # 3. Choose Attack Action
             action, log_prob, value = self.agent.act(current_state)
             gamelib.debug_write(f"Selected action: {action}, log_prob: {log_prob:.4f}, value: {value:.4f}")

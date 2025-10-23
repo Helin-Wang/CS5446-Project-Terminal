@@ -139,10 +139,21 @@ class RLTrainer:
             
         except subprocess.TimeoutExpired:
             print(f"Game {game_num} timed out")
-            return {'game_num': game_num, 'result': 'timeout', 'winner': 'none'}
+            return {
+                'game_num': game_num,
+                'result': 'timeout',
+                'winner': 'none',
+                'rollout_data': []
+            }
         except Exception as e:
             print(f"Error in game {game_num}: {e}")
-            return {'game_num': game_num, 'result': 'error', 'winner': 'none'}
+            return {
+                'game_num': game_num,
+                'result': 'error',
+                'winner': 'none',
+                'rollout_data': [],
+                'error': str(e)
+            }
     
     def _parse_game_result(self, stdout, stderr):
         """
@@ -537,7 +548,10 @@ class RLTrainer:
             for game_num in range(1, self.batch_size + 1):
                 print(f"Starting game {game_num}/{self.batch_size}")
                 result = self.run_single_game(epoch, game_num)
-                rollout_data.append(result['rollout_data'])
+                game_rollout = result.get('rollout_data', [])
+                if 'rollout_data' not in result:
+                    print(f"Warning: rollout data missing for game {game_num}, defaulting to empty dataset")
+                rollout_data.append(game_rollout)
                 if result['result'] == 'win':
                     self.wins += 1
                 elif result['result'] == 'loss':
