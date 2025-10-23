@@ -4,6 +4,29 @@ import torch.nn.functional as F
 import numpy as np
 
 
+class ResidualBlock(nn.Module):
+    """Residual block with layer normalization"""
+    
+    def __init__(self, hidden_dim):
+        super(ResidualBlock, self).__init__()
+        self.linear1 = nn.Linear(hidden_dim, hidden_dim)
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim)
+        self.activation = nn.ReLU()
+        
+    def forward(self, x):
+        residual = x
+        out = self.linear1(x)
+        out = self.norm1(out)
+        out = self.activation(out)
+        out = self.linear2(out)
+        out = self.norm2(out)
+        out = out + residual  # Residual connection
+        out = self.activation(out)
+        return out
+
+
 class CNNPPONetwork(nn.Module):
     
     def __init__(self, board_channels=4, scalar_dim=7, action_dim=4, hidden_dim=128):
@@ -14,26 +37,32 @@ class CNNPPONetwork(nn.Module):
         self.action_dim = action_dim
         self.hidden_dim = hidden_dim
         
-        # CNN for spatial processing
+        # CNN for spatial processing with layer normalization
         self.conv_layers = nn.Sequential(
             # First conv block
             nn.Conv2d(board_channels, 32, kernel_size=3, padding=1),
+            nn.LayerNorm([32, 28, 28]),  # Layer norm for conv
             nn.ReLU(),
             nn.Conv2d(32, 32, kernel_size=3, padding=1),
+            nn.LayerNorm([32, 28, 28]),
             nn.ReLU(),
             nn.MaxPool2d(2),  # 28x28 -> 14x14
             
             # Second conv block  
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.LayerNorm([64, 14, 14]),
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.LayerNorm([64, 14, 14]),
             nn.ReLU(),
             nn.MaxPool2d(2),  # 14x14 -> 7x7
             
             # Third conv block
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.LayerNorm([128, 7, 7]),
             nn.ReLU(),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.LayerNorm([128, 7, 7]),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d((4, 4))  # 7x7 -> 4x4
         )
@@ -44,25 +73,32 @@ class CNNPPONetwork(nn.Module):
         # Combine spatial + scalar features
         self.combined_dim = self.spatial_features_dim + scalar_dim
         
-        # Shared layers
-        self.shared_layers = nn.Sequential(
-            nn.Linear(self.combined_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-        )
+        # Shared layers with residual connections and layer normalization
+        self.shared_layers = nn.ModuleList([
+            # First layer
+            nn.Sequential(
+                nn.Linear(self.combined_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.ReLU()
+            ),
+            # Residual blocks
+            ResidualBlock(hidden_dim),
+            ResidualBlock(hidden_dim),
+        ])
         
-        # Actor head (policy)
+        # Actor head (policy) with layer normalization
         self.actor = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, action_dim),
             nn.Softmax(dim=-1)
         )
         
-        # Critic head (value)
+        # Critic head (value) with layer normalization
         self.critic = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
@@ -86,8 +122,10 @@ class CNNPPONetwork(nn.Module):
         # Combine with scalar features
         combined_features = torch.cat([spatial_features, scalar_tensor], dim=1)
         
-        # Get shared features
-        shared_features = self.shared_layers(combined_features)
+        # Get shared features through residual blocks
+        shared_features = combined_features
+        for layer in self.shared_layers:
+            shared_features = layer(shared_features)
         
         # Get policy and value
         action_probs = self.actor(shared_features)
