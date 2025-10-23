@@ -41,8 +41,8 @@ class Agent:
         self.training_step = 0
         
         # Learning rate scheduling parameters
-        self.warmup_steps = 1000  # Warmup period
-        self.max_steps = 100000   # Total training steps for scheduling
+        self.warmup_steps = 50     # Warmup period: 50 epochs (5% of 1000 epochs)
+        self.max_steps = 1000      # Total training steps: 1000 epochs
         
         # Learning rate parameters
         self.policy_lr_max = 3e-4
