@@ -79,7 +79,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         self.build_reactive_defense(game_state)
 
         # Randomly choose an action to take
-        action = random.choice(["stall_with_interceptors", "demolisher_line_strategy", "scout_flood"])
+        action = random.choice(["stall_with_interceptors", "demolisher_line_strategy", "scout_flood", "skip"])
         if action == "stall_with_interceptors":
             self.stall_with_interceptors(game_state)
         elif action == "demolisher_line_strategy":

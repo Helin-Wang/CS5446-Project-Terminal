@@ -309,7 +309,7 @@ class RLTrainer:
             from rl.agent import Agent
             
             # Load the existing trained agent
-            agent = Agent()
+            agent = Agent(board_channels=5, scalar_dim=7, action_dim=8, hidden_dim=128)
             if os.path.exists(self.model_save_path):
                 agent.load_model(self.model_save_path)
             
@@ -339,7 +339,7 @@ class RLTrainer:
             from rl.agent import Agent
             
             # Create a dummy agent to test saving
-            agent = Agent()
+            agent = Agent(board_channels=5, scalar_dim=7, action_dim=8, hidden_dim=128)
             
             return agent.get_model_stats() if hasattr(agent, 'get_model_stats') else {
                 'total_states': 0,
@@ -369,7 +369,7 @@ class RLTrainer:
             from rl.agent import Agent
             
             # Create agent with model path and CNN parameters
-            agent = Agent(model_path=self.model_save_path, board_channels=4, scalar_dim=7, action_dim=8, hidden_dim=128)
+            agent = Agent(model_path=self.model_save_path, board_channels=5, scalar_dim=7, action_dim=8, hidden_dim=128)
             
             # Set to training mode
             agent.set_training_mode(True)

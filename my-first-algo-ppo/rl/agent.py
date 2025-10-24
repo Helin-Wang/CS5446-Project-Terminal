@@ -12,13 +12,13 @@ from rl.network import CNNPPONetwork
 
 
 class Agent:
-    def __init__(self, model_path=None, board_channels=4, scalar_dim=7, action_dim=8, hidden_dim=128):
+    def __init__(self, model_path=None, board_channels=5, scalar_dim=7, action_dim=8, hidden_dim=128):
         """
         Initialize the PPO agent
         
         Args:
             model_path: Path to load/save the model. If None, will initialize new model.
-            board_channels: Number of board channels (4)
+            board_channels: Number of board channels (5)
             scalar_dim: Scalar features dimension (7)
             action_dim: Action dimension (number of macros)
             hidden_dim: Hidden layer dimension

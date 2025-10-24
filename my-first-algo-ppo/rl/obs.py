@@ -1,11 +1,12 @@
 """
 CNN-based observation space for the bot.
 
-Board representation: [4, 28, 28]
+Board representation: [5, 28, 28]
 - Channel 0: WALL occupancy    [-1, 0, +1]
 - Channel 1: SUPPORT occupancy [-1, 0, +1]  
 - Channel 2: TURRET occupancy  [-1, 0, +1]
 - Channel 3: HP values         [-1, +1] (normalized HP)
+- Channel 4: Valid mask        [0, 1] (1 for valid octagonal area, 0 for invalid)
 
 Global vector: [7]
 - My MP, SP, HP normalized
@@ -50,10 +51,14 @@ class State:
     
     def _create_board_tensor(self, game_state):
         """
-        Create 4-channel board tensor [4, 28, 28]
-        Channels: WALL, SUPPORT, TURRET occupancy + HP values
+        Create 5-channel board tensor [5, 28, 28]
+        Channels: WALL, SUPPORT, TURRET occupancy + HP values + Valid mask
         """
-        board = torch.zeros(4, 28, 28)
+        board = torch.zeros(5, 28, 28)
+        
+        # Create valid mask for octagonal board area
+        valid_mask = self._create_valid_mask()
+        board[4, :, :] = valid_mask
         
         # Iterate through all valid board positions
         for x in range(28):
@@ -123,6 +128,61 @@ class State:
         clipped_value = max(0, min(value, max_value))
         # Normalize to [0, 1]
         return clipped_value / max_value
+    
+    def _create_valid_mask(self):
+        """
+        Create a valid mask for the octagonal board area.
+        Returns a 28x28 tensor where 1 indicates valid positions and 0 indicates invalid positions.
+        
+        Octagonal vertices: [0,13], [0,14], [13,27], [14,27], [27,13], [27,14], [14,0], [13,0]
+        """
+        mask = torch.zeros(28, 28)
+        
+        # Define the octagonal vertices
+        vertices = [
+            [0, 13], [0, 14], [13, 27], [14, 27], 
+            [27, 13], [27, 14], [14, 0], [13, 0]
+        ]
+        
+        # Convert to numpy for easier manipulation
+        vertices_np = np.array(vertices)
+        
+        # Create a grid of all positions
+        y_coords, x_coords = np.mgrid[0:28, 0:28]
+        points = np.stack([x_coords.flatten(), y_coords.flatten()], axis=1)
+        
+        # Check if each point is inside the octagon
+        for i, (x, y) in enumerate(points):
+            if self._point_in_octagon(x, y, vertices_np):
+                mask[y, x] = 1.0
+        
+        # Explicitly mark the octagonal vertices as valid
+        for x, y in vertices:
+            mask[y, x] = 1.0
+        
+        return mask
+    
+    def _point_in_octagon(self, x, y, vertices):
+        """
+        Check if a point (x, y) is inside the octagon defined by vertices.
+        Uses ray casting algorithm.
+        """
+        n = len(vertices)
+        inside = False
+        
+        p1x, p1y = vertices[0]
+        for i in range(1, n + 1):
+            p2x, p2y = vertices[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        
+        return inside
     
     def is_terminal_state(self, game_state):
         """

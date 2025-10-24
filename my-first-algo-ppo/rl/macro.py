@@ -50,11 +50,11 @@ class MacroActions:
         # Left side scout flood strategy
         # Only spawn Scouts every other turn
         # Sending more at once is better since attacks can only hit a single scout at a time
-        if game_state.turn_number % 2 == 1:
-            # Left side spawn locations: [[11,2],[12,1],[13,0]]
-            scout_spawn_location_options = [[11, 2], [12, 1], [13, 0]]
-            best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
-            game_state.attempt_spawn(SCOUT, best_location, 1000)
+        
+        # Left side spawn locations: [[11,2],[12,1],[13,0]]
+        scout_spawn_location_options = [[11, 2], [12, 1], [13, 0]]
+        best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
+        game_state.attempt_spawn(SCOUT, best_location, 1000)
 
         # Lastly, if we have spare SP, let's build some supports
         support_locations = [[13, 2], [14, 2], [13, 3], [14, 3]]
@@ -64,11 +64,11 @@ class MacroActions:
         # Right side scout flood strategy
         # Only spawn Scouts every other turn
         # Sending more at once is better since attacks can only hit a single scout at a time
-        if game_state.turn_number % 2 == 1:
-            # Right side spawn locations: [[16,2],[15,1],[14,0]]
-            scout_spawn_location_options = [[16, 2], [15, 1], [14, 0]]
-            best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
-            game_state.attempt_spawn(SCOUT, best_location, 1000)
+        
+        # Right side spawn locations: [[16,2],[15,1],[14,0]]
+        scout_spawn_location_options = [[16, 2], [15, 1], [14, 0]]
+        best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
+        game_state.attempt_spawn(SCOUT, best_location, 1000)
 
         # Lastly, if we have spare SP, let's build some supports
         support_locations = [[13, 2], [14, 2], [13, 3], [14, 3]]
