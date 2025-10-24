@@ -12,7 +12,7 @@ from rl.network import CNNPPONetwork
 
 
 class Agent:
-    def __init__(self, model_path=None, board_channels=4, scalar_dim=7, action_dim=3, hidden_dim=128):
+    def __init__(self, model_path=None, board_channels=4, scalar_dim=7, action_dim=8, hidden_dim=128):
         """
         Initialize the PPO agent
         

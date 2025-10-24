@@ -62,7 +62,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         
         # Initialize agent with model path and CNN parameters
         model_path = os.path.join(os.path.dirname(__file__), "rl_model.pkl")
-        self.agent = Agent(model_path=model_path, board_channels=4, scalar_dim=7, action_dim=3, hidden_dim=128)
+        self.agent = Agent(model_path=model_path, board_channels=4, scalar_dim=7, action_dim=8, hidden_dim=128)
         
         self.state = State(config)
         self.macro_actions = MacroActions(config)

@@ -369,7 +369,7 @@ class RLTrainer:
             from rl.agent import Agent
             
             # Create agent with model path and CNN parameters
-            agent = Agent(model_path=self.model_save_path, board_channels=4, scalar_dim=7, action_dim=3, hidden_dim=128)
+            agent = Agent(model_path=self.model_save_path, board_channels=4, scalar_dim=7, action_dim=8, hidden_dim=128)
             
             # Set to training mode
             agent.set_training_mode(True)
