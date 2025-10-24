@@ -65,6 +65,28 @@ class CNNPPONetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
+        
+        # Initialize weights properly
+        self._initialize_weights()
+    
+    def _initialize_weights(self):
+        """Initialize network weights properly"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Conv2d):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+        
+        # Special initialization for actor head to encourage exploration
+        with torch.no_grad():
+            # Add small random noise to actor weights to break symmetry
+            for layer in self.actor:
+                if isinstance(layer, nn.Linear):
+                    layer.weight.add_(torch.randn_like(layer.weight) * 0.01)
     
     def forward(self, board_tensor, scalar_tensor):
         """
@@ -109,6 +131,12 @@ class CNNPPONetwork(nn.Module):
             value: State value
         """
         action_logits, value = self.forward(board_tensor, scalar_tensor)
+        
+        # Add small random noise to encourage exploration
+        if not deterministic:
+            noise = torch.randn_like(action_logits) * 0.1
+            action_logits = action_logits + noise
+        
         dist = torch.distributions.Categorical(logits=action_logits)
         
         if deterministic:

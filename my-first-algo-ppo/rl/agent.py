@@ -81,13 +81,15 @@ class Agent:
         # Convert to Python types
         return action.item(), log_prob.item(), value.item()
     
-    def update(self, rollout_data):
+    def update(self, rollout_data, current_step=0, total_steps=100000):
         """
         Update the network parameters using PPO training logic
         
         Args:
             rollout_data: List of episodes, where each episode is a list of transitions
                          Each transition contains: state, action, reward, terminal, etc.
+            current_step: Current training step for entropy annealing
+            total_steps: Total training steps for entropy annealing
         """
         if not rollout_data:
             import sys
@@ -106,27 +108,36 @@ class Agent:
             }
         
         # Process rollout data and perform PPO update
-        return self._ppo_update(rollout_data)
+        return self._ppo_update(rollout_data, current_step=current_step, total_steps=total_steps)
     
-    def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.1, value_clip_ratio=0.2, 
-                   learning_rate=1e-4, entropy_coef=0.1, value_coef=0.1, max_grad_norm=0.5,
-                   mini_batch_size=64):
+    def _ppo_update(self, rollout_data, ppo_epochs=4, clip_ratio=0.2, value_clip_ratio=0.2, 
+                   learning_rate=1e-4, entropy_coef_start=0.02, entropy_coef_end=0.005, 
+                   value_coef=0.1, max_grad_norm=0.5, mini_batch_size=64, 
+                   current_step=0, total_steps=100000, target_kl=0.015):
         """
         Perform PPO update using rollout data with proper training design
         
         Args:
             rollout_data: List of episodes containing transitions
             ppo_epochs: Number of PPO update epochs
-            clip_ratio: PPO clipping ratio for policy (reduced from 0.2 to 0.1 for more policy updates)
+            clip_ratio: PPO clipping ratio for policy (increased to 0.2 for more stable updates)
             value_clip_ratio: Clipping ratio for value function
-            entropy_coef: Entropy regularization coefficient (increased from 0.01 to 0.1 for more exploration)
+            entropy_coef_start: Starting entropy coefficient for annealing
+            entropy_coef_end: Ending entropy coefficient for annealing
             value_coef: Value loss coefficient
             max_grad_norm: Maximum gradient norm for clipping
             mini_batch_size: Mini-batch size for training
+            current_step: Current training step for entropy annealing
+            total_steps: Total training steps for entropy annealing
+            target_kl: Target KL divergence for early stopping
         """
         import torch
         import torch.nn.functional as F
         import random
+        
+        # Calculate entropy coefficient using linear annealing
+        progress = min(current_step / total_steps, 1.0)
+        entropy_coef = entropy_coef_start + (entropy_coef_end - entropy_coef_start) * progress
         
         # Set device and ensure network is on correct device
         device = self.device
@@ -199,6 +210,7 @@ class Agent:
             epoch_value_loss = 0.0
             epoch_entropy_loss = 0.0
             epoch_total_loss = 0.0
+            epoch_kl_div = 0.0
             num_batches = 0
             
             # Mini-batch training
@@ -237,11 +249,16 @@ class Agent:
                 # Compute entropy loss
                 entropy_loss = -entropy.mean()
                 
+                # Compute KL divergence for monitoring
+                with torch.no_grad():
+                    kl_div = (batch_old_log_probs - log_probs).mean()
+                
                 # Accumulate losses for this epoch
                 epoch_policy_loss += policy_loss.item()
                 epoch_value_loss += value_loss.item()
                 epoch_entropy_loss += entropy_loss.item()
                 epoch_total_loss += (policy_loss + value_coef * value_loss + entropy_coef * entropy_loss).item()
+                epoch_kl_div += kl_div.item()
                 num_batches += 1
                 
                 # Standard PPO update with single optimizer
@@ -258,6 +275,7 @@ class Agent:
             avg_value_loss = epoch_value_loss / num_batches
             avg_entropy_loss = epoch_entropy_loss / num_batches
             avg_total_loss = epoch_total_loss / num_batches
+            avg_kl_div = epoch_kl_div / num_batches
             
             # Store epoch losses
             epoch_policy_losses.append(avg_policy_loss)
@@ -265,9 +283,15 @@ class Agent:
             epoch_entropy_losses.append(avg_entropy_loss)
             epoch_total_losses.append(avg_total_loss)
             
+            # KL constraint check
+            if avg_kl_div > target_kl:
+                import sys
+                print(f"KL divergence {avg_kl_div:.4f} exceeds target {target_kl:.4f}, early stopping at epoch {epoch}", file=sys.stderr)
+                break
+            
             if epoch == 0:  # Print only first epoch
                 import sys
-                print(f"Epoch {epoch}: Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}, Entropy Loss: {avg_entropy_loss:.4f}", file=sys.stderr)
+                print(f"Epoch {epoch}: Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}, Entropy Loss: {avg_entropy_loss:.4f}, KL: {avg_kl_div:.4f}", file=sys.stderr)
         
         # Calculate average losses across all epochs
         avg_policy_loss = sum(epoch_policy_losses) / len(epoch_policy_losses)

@@ -132,8 +132,9 @@ class RLTrainer:
             game_result['timestamp'] = time.time()
             
             # Parse rollout data and calculate rewards
-            rollout_data = self._parse_rollout_data(game_result)
+            rollout_data, action_counts = self._parse_rollout_data(game_result)
             game_result['rollout_data'] = rollout_data
+            game_result['action_counts'] = action_counts
 
             return game_result
             
@@ -143,7 +144,8 @@ class RLTrainer:
                 'game_num': game_num,
                 'result': 'timeout',
                 'winner': 'none',
-                'rollout_data': []
+                'rollout_data': [],
+                'action_counts': {}
             }
         except Exception as e:
             print(f"Error in game {game_num}: {e}")
@@ -152,6 +154,7 @@ class RLTrainer:
                 'result': 'error',
                 'winner': 'none',
                 'rollout_data': [],
+                'action_counts': {},
                 'error': str(e)
             }
     
@@ -247,7 +250,7 @@ class RLTrainer:
                 
                 # Calculate reward for this turn
                 if i < len(rollout_data) - 1:
-                    # Non-terminal turn: calculate reward based on HP changes
+                    # Non-terminal turn: calculate reward using new combined formula
                     current_hp = turn_data['hp']
                     current_enemy_hp = turn_data['enemy_hp']
                     
@@ -260,9 +263,10 @@ class RLTrainer:
                     current_state = MockGameState(current_hp, current_enemy_hp)
                     next_state = MockGameState(next_hp, next_enemy_hp)
                     
-                    # Calculate reward
-                    reward = reward_tracker.compute_reward(next_state)
-                    
+                    # Calculate reward using new combined formula
+                    action = turn_data.get('action')
+                    reward = reward_tracker.compute_reward(next_state, action, turn_data)
+                   
                 else:
                     # Last turn: treat as terminal and use game result
                     if game_result['result'] == 'win':
@@ -282,14 +286,20 @@ class RLTrainer:
                 
                 #print(f"Turn {turn_data['turn_num']}: action={turn_data['action']}, reward={reward:.2f}")
             
+            # Calculate action statistics
+            action_counts = {}
+            for turn_data in rollout_data:
+                action = turn_data.get('action', -1)
+                action_counts[action] = action_counts.get(action, 0) + 1
+            
             #print(f"Processed {len(processed_data)} turns with calculated rewards")
-            return processed_data
+            return processed_data, action_counts
             
         except Exception as e:
             print(f"Error parsing rollout data: {e}")
             import traceback
             traceback.print_exc()
-            return []
+            return [], {}
     
     def save_model(self, game_num, checkpoint_name=None):
         """Save the RL model"""
@@ -372,7 +382,7 @@ class RLTrainer:
             traceback.print_exc()
             return None
     
-    def _log_training_epoch(self, epoch, wins, losses, draws, win_rate, training_time, total_transitions, avg_enemy_hp, loss_info=None):
+    def _log_training_epoch(self, epoch, wins, losses, draws, win_rate, training_time, total_transitions, avg_enemy_hp, loss_info=None, action_counts=None):
         """
         Log training epoch statistics
         
@@ -409,6 +419,16 @@ class RLTrainer:
                 "avg_total_loss": loss_info['avg_total_loss']
             })
         
+        # Add action statistics if available
+        if action_counts is not None:
+            total_actions = sum(action_counts.values())
+            if total_actions > 0:
+                action_stats = {}
+                for action, count in action_counts.items():
+                    action_stats[f"action_{action}_count"] = count
+                    action_stats[f"action_{action}_percentage"] = (count / total_actions) * 100
+                log_entry.update(action_stats)
+        
         # Append to training log file
         with open(self.training_log_path, 'a') as f:
             f.write(json.dumps(log_entry) + '\n')
@@ -421,6 +441,15 @@ class RLTrainer:
         # Print loss information if available
         if loss_info is not None:
             print(f"Epoch {epoch} Avg Losses - Policy: {loss_info['avg_policy_loss']:.4f}, Value: {loss_info['avg_value_loss']:.4f}, Entropy: {loss_info['avg_entropy_loss']:.4f}, Total: {loss_info['avg_total_loss']:.4f}")
+        
+        # Print action statistics if available
+        if action_counts is not None and action_counts:
+            total_actions = sum(action_counts.values())
+            print(f"Epoch {epoch} Action Usage:")
+            for action in sorted(action_counts.keys()):
+                count = action_counts[action]
+                percentage = (count / total_actions) * 100
+                print(f"  Action {action}: {count} times ({percentage:.1f}%)")
     
     def get_training_summary(self):
         """
@@ -544,6 +573,7 @@ class RLTrainer:
             self.losses = 0
             self.draws = 0
             enemy_hp_sum = 0.0
+            total_action_counts = {}
             start_time = time.time()
             for game_num in range(1, self.batch_size + 1):
                 print(f"Starting game {game_num}/{self.batch_size}")
@@ -552,6 +582,12 @@ class RLTrainer:
                 if 'rollout_data' not in result:
                     print(f"Warning: rollout data missing for game {game_num}, defaulting to empty dataset")
                 rollout_data.append(game_rollout)
+                
+                # Collect action counts from this game
+                game_action_counts = result.get('action_counts', {})
+                for action, count in game_action_counts.items():
+                    total_action_counts[action] = total_action_counts.get(action, 0) + count
+                
                 if result['result'] == 'win':
                     self.wins += 1
                 elif result['result'] == 'loss':
@@ -587,7 +623,10 @@ class RLTrainer:
             loss_info = None
             if rollout_data:
                 print(f"Updating agent with {len(rollout_data)} episodes")
-                loss_info = agent.update(rollout_data)
+                # Calculate current step and total steps for entropy annealing
+                current_step = epoch * self.batch_size * 50  # Approximate steps per epoch
+                total_steps = self.epochs * self.batch_size * 50  # Total training steps
+                loss_info = agent.update(rollout_data, current_step=current_step, total_steps=total_steps)
             else:
                 print("No rollout data available for training")
             
@@ -605,7 +644,7 @@ class RLTrainer:
             training_time = end_time - start_time
             
             # Log training epoch statistics
-            self._log_training_epoch(epoch, self.wins, self.losses, self.draws, win_rate, training_time, total_transitions, avg_enemy_hp, loss_info)
+            self._log_training_epoch(epoch, self.wins, self.losses, self.draws, win_rate, training_time, total_transitions, avg_enemy_hp, loss_info, total_action_counts)
         
         # Print final training summary
         self.print_training_summary()

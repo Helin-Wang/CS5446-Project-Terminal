@@ -75,6 +75,9 @@ class AlgoStrategy(gamelib.AlgoCore):
         # Get game number from environment variable
         self.game_num = int(os.environ.get('GAME_NUM', 1))
         
+        # Enable action frame debugging for first few turns
+        self._debug_action_frame = True
+        
         # Reset for new game
         self.reset_for_new_game()
         
@@ -104,6 +107,14 @@ class AlgoStrategy(gamelib.AlgoCore):
         try:
             # Debug: Log turn info
             gamelib.debug_write(f"RL Turn {game_state.turn_number}: HP={game_state.my_health}, MP={game_state.get_resource(1)}, SP={game_state.get_resource(0)}")
+            
+            # 0. Initialize combat data for new turn (if not exists)
+            if not hasattr(self, 'current_turn_combat_data'):
+                self.current_turn_combat_data = {
+                    'damage_dealt': 0.0,      # 我方对敌方造成的总伤害
+                    'damage_received': 0.0,    # 我方受到的伤害
+                    'events': {}               # 保存events用于后续处理
+                }
             
             # 1. Build state from GameState
             current_state = self.state.build_state(game_state)
@@ -139,20 +150,35 @@ class AlgoStrategy(gamelib.AlgoCore):
                 "reward": 0.0,  # Will be calculated in train_rl.py
                 "hp": game_state.my_health,
                 "enemy_hp": game_state.enemy_health,
-                "terminal": False
+                "terminal": False,
+                # New combat data fields
+                "damage_dealt": self.current_turn_combat_data.get('damage_dealt', 0.0),
+                "damage_received": self.current_turn_combat_data.get('damage_received', 0.0)
             }
             self.turn_data_logged = False  # Reset flag for next turn
             
-            # 6. Update last_state, last_action, last_log_prob, and last_value
+            # 6. Update combat data in current_turn_data with final values
+            if self.current_turn_data is not None:
+                self.current_turn_data['damage_dealt'] = self.current_turn_combat_data.get('damage_dealt', 0.0)
+                self.current_turn_data['damage_received'] = self.current_turn_combat_data.get('damage_received', 0.0)
+            
+            # 7. Update last_state, last_action, last_log_prob, and last_value
             self.last_state = current_state
             self.last_action = action
             self.last_log_prob = log_prob
             self.last_value = value
             
-            # 7. Save model periodically (every 5 turns) to ensure we don't lose progress
+            # 8. Save model periodically (every 5 turns) to ensure we don't lose progress
             # if game_state.turn_number % 5 == 0:
             #     self.save_model(model_name="rl_model.pkl")
             #     gamelib.debug_write(f"Periodic model save at turn {game_state.turn_number}")
+            
+            # 9. Reset combat data for next turn
+            self.current_turn_combat_data = {
+                'damage_dealt': 0.0,      # 我方对敌方造成的总伤害
+                'damage_received': 0.0,    # 我方受到的伤害
+                'events': {}               # 保存events用于后续处理
+            }
             
         except Exception as e:
             gamelib.debug_write(f"Error in my_strategy: {e}")
@@ -177,6 +203,13 @@ class AlgoStrategy(gamelib.AlgoCore):
         # Reset rollout data caching
         self.current_turn_data = None
         self.turn_data_logged = False
+        
+        # Reset combat data tracking
+        self.current_turn_combat_data = {
+            'damage_dealt': 0.0,
+            'damage_received': 0.0,
+            'events': {}
+        }
         
         # Note: We keep the same agent and reward_tracker to preserve learning
     
@@ -256,6 +289,18 @@ class AlgoStrategy(gamelib.AlgoCore):
         # Let's record at what position we get scored on
         state = json.loads(turn_string)
         events = state["events"]
+        
+        # Accumulate damage data from this action frame
+        if hasattr(self, 'current_turn_combat_data'):
+            self._accumulate_combat_data(events)
+        
+        # Debug: Print all available events to understand the structure
+        if hasattr(self, '_debug_action_frame') and self._debug_action_frame:
+            gamelib.debug_write(f"Action frame events: {list(events.keys())}")
+            for event_type, event_data in events.items():
+                if event_data:  # Only print non-empty events
+                    gamelib.debug_write(f"Event {event_type}: {event_data[:3]}...")  # Show first 3 items
+        
         breaches = events["breach"]
         for breach in breaches:
             location = breach[0]
@@ -266,6 +311,44 @@ class AlgoStrategy(gamelib.AlgoCore):
                 gamelib.debug_write("Got scored on at: {}".format(location))
                 self.scored_on_locations.append(location)
                 gamelib.debug_write("All locations: {}".format(self.scored_on_locations))
+
+    def _accumulate_combat_data(self, events):
+        """
+        Update combat data from action frame events.
+        Since damage data in action frames is cumulative for the turn,
+        we simply overwrite with the latest frame data.
+        
+        Args:
+            events: Dictionary containing action frame events
+        """
+        # Calculate damage totals from this action frame
+        damage_dealt_this_frame = 0.0
+        damage_received_this_frame = 0.0
+        
+        # Process damage events
+        for damage_event in events.get('damage', []):
+            location, damage_amount, unit_type, unit_id, player_index = damage_event
+            
+            if player_index == 2:  # 敌方受到伤害 (我方造成的伤害)
+                damage_dealt_this_frame += damage_amount
+            elif player_index == 1:  # 我方受到伤害
+                damage_received_this_frame += damage_amount
+        
+        # Overwrite with latest frame data (cumulative damage for the turn)
+        # The last action frame will contain the complete turn damage
+        self.current_turn_combat_data['damage_dealt'] = damage_dealt_this_frame
+        self.current_turn_combat_data['damage_received'] = damage_received_this_frame
+        
+        # Process attack events for additional context
+        for attack_event in events.get('attack', []):
+            attacker_location, target_location, damage_amount, attacker_type, attacker_id, target_id, attacker_player = attack_event
+            
+            if attacker_player == 1:  # 我方攻击敌方
+                # This damage should already be counted in damage events, but we can use this for validation
+                pass
+            elif attacker_player == 2:  # 敌方攻击我方
+                # This damage should already be counted in damage events, but we can use this for validation
+                pass
 
 
 if __name__ == "__main__":
