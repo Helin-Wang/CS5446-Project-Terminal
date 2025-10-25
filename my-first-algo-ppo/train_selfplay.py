@@ -41,17 +41,19 @@ class SelfPlayTrainer(RLTrainer):
         self.selfplay_stats = {
             'opponent_updates': 0,
             'last_opponent_epoch': 0,
-            'win_rate_vs_self': []
+            'win_rate_vs_self': [],
+            'recent_win_rates': []  # Track recent win rates for dynamic updates
         }
         
         print(f"Self-Play Trainer initialized:")
-        print(f"  - Opponent update interval: {self.opponent_update_interval} epochs")
+        print(f"  - Dynamic opponent update: When last 3 epochs all have win rate ≥ 80%")
+        print(f"  - Fallback update interval: {self.opponent_update_interval} epochs")
         print(f"  - Self-play starts at epoch: {self.selfplay_start_epoch}")
         print(f"  - Opponent directory: opponent-strategy")
     
     def _should_update_opponent(self, epoch):
         """
-        Determine if opponent should be updated this epoch
+        Determine if opponent should be updated this epoch based on win rate
         
         Args:
             epoch: Current epoch number
@@ -63,11 +65,24 @@ class SelfPlayTrainer(RLTrainer):
         if epoch < self.selfplay_start_epoch:
             return False
             
-        # Update at specified intervals, but also update on the first self-play epoch
+        # Update on the first self-play epoch
         if epoch == self.selfplay_start_epoch:
             return True
             
-        # Update at specified intervals
+        # Dynamic update based on recent win rate
+        # Need at least 3 epochs of self-play data
+        if len(self.selfplay_stats['recent_win_rates']) >= 3:
+            # Check if last 3 epochs all have win rate ≥ 80%
+            last_3_win_rates = self.selfplay_stats['recent_win_rates'][-3:]
+            all_above_80 = all(win_rate >= 0.8 for win_rate in last_3_win_rates)
+            
+            if all_above_80:
+                print(f"Dynamic opponent update triggered!")
+                print(f"  - Last 3 epochs win rates: {[f'{wr:.1%}' for wr in last_3_win_rates]}")
+                print(f"  - All ≥ 80% threshold: ✓")
+                return True
+        
+        # Fallback: Update at specified intervals if no dynamic update
         return epoch % self.opponent_update_interval == 0
     
     def _update_opponent_to_current_model(self, epoch):
@@ -225,6 +240,11 @@ class SelfPlayTrainer(RLTrainer):
         # Track self-play statistics
         if epoch >= self.selfplay_start_epoch:
             self.selfplay_stats['win_rate_vs_self'].append(win_rate)
+            self.selfplay_stats['recent_win_rates'].append(win_rate)
+            
+            # Keep only recent win rates (last 10 epochs for analysis)
+            if len(self.selfplay_stats['recent_win_rates']) > 10:
+                self.selfplay_stats['recent_win_rates'] = self.selfplay_stats['recent_win_rates'][-10:]
     
     def _print_selfplay_summary(self):
         """Print self-play training summary"""
@@ -234,11 +254,19 @@ class SelfPlayTrainer(RLTrainer):
         print(f"Total Opponent Updates: {self.selfplay_stats['opponent_updates']}")
         print(f"Last Opponent Epoch: {self.selfplay_stats['last_opponent_epoch']}")
         print(f"Self-Play Started at Epoch: {self.selfplay_start_epoch}")
+        print(f"Update Strategy: Dynamic (last 3 epochs all ≥ 80%) + Fallback ({self.opponent_update_interval} epochs)")
         
         if self.selfplay_stats['win_rate_vs_self']:
             avg_win_rate_vs_self = sum(self.selfplay_stats['win_rate_vs_self']) / len(self.selfplay_stats['win_rate_vs_self'])
             print(f"Average Win Rate vs Self: {avg_win_rate_vs_self:.2%}")
             print(f"Latest Win Rate vs Self: {self.selfplay_stats['win_rate_vs_self'][-1]:.2%}")
+            
+            # Show recent win rates
+            if len(self.selfplay_stats['recent_win_rates']) >= 3:
+                last_3_rates = self.selfplay_stats['recent_win_rates'][-3:]
+                all_above_80 = all(rate >= 0.8 for rate in last_3_rates)
+                print(f"Last 3 Epochs: {[f'{rate:.1%}' for rate in last_3_rates]}")
+                print(f"All ≥ 80%: {'✓' if all_above_80 else '✗'}")
         
         print("=" * 60)
 
@@ -286,7 +314,7 @@ if __name__ == "__main__":
         epochs=epochs,
         save_interval=50,
         batch_size=5,                 # Correct batch size: 5 rollouts per epoch
-        opponent_update_interval=10,  # Update opponent every 5 epochs
+        opponent_update_interval=50,  # Update opponent every 50 epochs (fallback)
         selfplay_start_epoch=1,       # Start self-play from epoch 1
         log_prefix=log_prefix
     )
