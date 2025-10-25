@@ -57,9 +57,9 @@ class RLTrainer:
     def _get_default_opponent(self):
         """Get default opponent path"""
         if self.is_windows:
-            return os.path.join(self.parent_dir, "python-algo-weak", "run.ps1")
+            return os.path.join(self.parent_dir, "opponent-strategy", "run.ps1")
         else:
-            return os.path.join(self.parent_dir, "python-algo-weak", "run.sh")
+            return os.path.join(self.parent_dir, "opponent-strategy", "run.sh")
     
     def _prepare_algo_paths(self):
         """Prepare algorithm paths for execution"""
@@ -161,7 +161,7 @@ class RLTrainer:
     def _parse_game_result(self, stdout, stderr):
         """
         Parse game result from output
-        This is a simplified parser - you may need to adjust based on actual game output
+        Updated to match actual game engine output format
         """
         # Look for win/loss indicators in the output
         output = stdout + stderr
@@ -182,16 +182,18 @@ class RLTrainer:
             print(f"Error parsing enemy HP: {e}")
             enemy_hp = 0.0
         
-        if "Player 1 wins" in output or "Player 0 wins" in output:
-            if "Player 1 wins" in output:
-                return {'result': 'win', 'winner': 'player1', 'score': 1, 'enemy_hp': enemy_hp}
-            else:
-                return {'result': 'loss', 'winner': 'player0', 'score': -1, 'enemy_hp': enemy_hp}
+        # Parse actual game engine output format: "Winner (p1 perspective, 1 = p1 2 = p2): X"
+        if "Winner (p1 perspective, 1 = p1 2 = p2): 1" in output:
+            return {'result': 'win', 'winner': 'player1', 'score': 1, 'enemy_hp': enemy_hp}
+        elif "Winner (p1 perspective, 1 = p1 2 = p2): 2" in output:
+            return {'result': 'loss', 'winner': 'player2', 'score': -1, 'enemy_hp': enemy_hp}
         elif "Draw" in output or "Tie" in output:
             return {'result': 'draw', 'winner': 'none', 'score': 0, 'enemy_hp': enemy_hp}
         else:
             # Default to loss if we can't parse
-            return {'result': 'loss', 'winner': 'player0', 'score': -1, 'enemy_hp': enemy_hp}
+            print(f"Warning: Could not parse game result from output. Defaulting to loss.")
+            print(f"Output snippet: {output[-200:] if len(output) > 200 else output}")
+            return {'result': 'loss', 'winner': 'unknown', 'score': -1, 'enemy_hp': enemy_hp}
     
     def _parse_rollout_data(self, game_result):
         """

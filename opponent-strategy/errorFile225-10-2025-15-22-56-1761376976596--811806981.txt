@@ -1,0 +1,2 @@
+Self-Play Opponent Random seed: 1895854240255041449
+---------------- Starting Your Algo --------------------
