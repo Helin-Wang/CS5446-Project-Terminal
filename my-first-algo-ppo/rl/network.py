@@ -131,12 +131,6 @@ class CNNPPONetwork(nn.Module):
             value: State value
         """
         action_logits, value = self.forward(board_tensor, scalar_tensor)
-        
-        # Add small random noise to encourage exploration
-        if not deterministic:
-            noise = torch.randn_like(action_logits) * 0.1
-            action_logits = action_logits + noise
-        
         dist = torch.distributions.Categorical(logits=action_logits)
         
         if deterministic:
