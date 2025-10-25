@@ -187,13 +187,8 @@ class RLTrainer:
             return {'result': 'win', 'winner': 'player1', 'score': 1, 'enemy_hp': enemy_hp}
         elif "Winner (p1 perspective, 1 = p1 2 = p2): 2" in output:
             return {'result': 'loss', 'winner': 'player2', 'score': -1, 'enemy_hp': enemy_hp}
-        elif "Draw" in output or "Tie" in output:
-            return {'result': 'draw', 'winner': 'none', 'score': 0, 'enemy_hp': enemy_hp}
         else:
-            # Default to loss if we can't parse
-            print(f"Warning: Could not parse game result from output. Defaulting to loss.")
-            print(f"Output snippet: {output[-200:] if len(output) > 200 else output}")
-            return {'result': 'loss', 'winner': 'unknown', 'score': -1, 'enemy_hp': enemy_hp}
+            return {'result': 'draw', 'winner': 'none', 'score': 0, 'enemy_hp': enemy_hp}
     
     def _parse_rollout_data(self, game_result):
         """
