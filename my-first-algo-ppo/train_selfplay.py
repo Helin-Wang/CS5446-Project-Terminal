@@ -213,7 +213,7 @@ class SelfPlayTrainer(RLTrainer):
 
         # 2.4 Save checkpoint at specified intervals
         if epoch % self.save_interval == 0:
-            checkpoint_name = f"checkpoint_epoch_{epoch}.pkl"
+            checkpoint_name = f"{self.log_prefix}_checkpoint_epoch_{epoch}.pkl"
             self.save_model(epoch, checkpoint_name)
     
         end_time = time.time()
