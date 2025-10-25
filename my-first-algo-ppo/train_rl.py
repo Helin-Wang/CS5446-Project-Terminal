@@ -13,7 +13,7 @@ import pickle
 from pathlib import Path
 
 class RLTrainer:
-    def __init__(self, algo_path, opponent_path=None, epochs=10, save_interval=10, batch_size=5):
+    def __init__(self, algo_path, opponent_path=None, epochs=10, save_interval=10, batch_size=5, log_prefix=None):
         """
         Initialize RL Trainer
         
@@ -23,6 +23,7 @@ class RLTrainer:
             epochs: Number of epochs to train
             save_interval: Save model every N games
             batch_size: Number of games to train in each batch
+            log_prefix: Prefix for log files to avoid conflicts (e.g., "selfplay", "vs_algo", "vs_weak")
         """
         self.algo_path = algo_path
         self.epochs = epochs
@@ -38,17 +39,20 @@ class RLTrainer:
         # Set opponent path after is_windows is defined
         self.opponent_path = opponent_path or self._get_default_opponent()
         
+        # Determine log prefix
+        self.log_prefix = log_prefix or self._get_default_log_prefix()
+        
         # Training statistics
         self.wins = 0
         self.losses = 0
         self.draws = 0
         self.game_results = []
         
-        # Model save path
-        self.model_save_path = os.path.join(self.file_dir, "rl_model.pkl")
+        # Model save path with prefix
+        self.model_save_path = os.path.join(self.file_dir, f"{self.log_prefix}_rl_model.pkl")
         
-        # Training log path
-        self.training_log_path = os.path.join(self.file_dir, "logs", "training_log.jsonl")
+        # Training log path with prefix
+        self.training_log_path = os.path.join(self.file_dir, "logs", f"{self.log_prefix}_training_log.jsonl")
         
         # Ensure logs and checkpoints directories exist
         os.makedirs(os.path.join(self.file_dir, "logs"), exist_ok=True)
@@ -60,6 +64,18 @@ class RLTrainer:
             return os.path.join(self.parent_dir, "opponent-strategy", "run.ps1")
         else:
             return os.path.join(self.parent_dir, "opponent-strategy", "run.sh")
+    
+    def _get_default_log_prefix(self):
+        """Get default log prefix based on opponent"""
+        opponent_name = os.path.basename(self.opponent_path)
+        if 'opponent-strategy' in opponent_name:
+            return 'selfplay'
+        elif 'python-algo-weak' in opponent_name:
+            return 'weak'
+        elif 'python-algo' in opponent_name:
+            return 'algo'
+        else:
+            return 'rl'
     
     def _prepare_algo_paths(self):
         """Prepare algorithm paths for execution"""
@@ -101,8 +117,11 @@ class RLTrainer:
         print(f"RL Agent: {algo1}")
         print(f"Opponent: {algo2}")
         
+        # Set environment variable for log prefix
+        os.environ['RL_LOG_PREFIX'] = self.log_prefix
+        
         # Clear previous rollout data before starting new game
-        rollout_file = os.path.join(self.file_dir, "logs", "current_turns.jsonl")
+        rollout_file = os.path.join(self.file_dir, "logs", f"{self.log_prefix}_current_turns.jsonl")
         if os.path.exists(rollout_file):
             os.remove(rollout_file)
             print(f"Cleared previous rollout data: {rollout_file}")
@@ -111,13 +130,18 @@ class RLTrainer:
         cmd = f"cd {self.parent_dir} && GAME_NUM={game_num} java -jar engine.jar work {algo1} {algo2}"
         
         try:
+            # Prepare environment with log prefix
+            env = os.environ.copy()
+            env['RL_LOG_PREFIX'] = self.log_prefix
+            
             result = subprocess.run(
                 cmd,
                 shell=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=300  # 5 minute timeout
+                timeout=300,  # 5 minute timeout
+                env=env
             )
             
             # Print the game output for debugging
@@ -169,7 +193,7 @@ class RLTrainer:
         # Parse enemy HP from the last turn data
         enemy_hp = 0.0
         try:
-            rollout_file = os.path.join(self.file_dir, "logs", "current_turns.jsonl")
+            rollout_file = os.path.join(self.file_dir, "logs", f"{self.log_prefix}_current_turns.jsonl")
             if os.path.exists(rollout_file):
                 with open(rollout_file, 'r') as f:
                     lines = f.readlines()
@@ -206,7 +230,7 @@ class RLTrainer:
             from rl.reward_tracker import RewardTracker
             
             # Path to rollout data file
-            rollout_file = os.path.join(self.file_dir, "logs", "current_turns.jsonl")
+            rollout_file = os.path.join(self.file_dir, "logs", f"{self.log_prefix}_current_turns.jsonl")
             
             if not os.path.exists(rollout_file):
                 print(f"Warning: Rollout file not found: {rollout_file}")
@@ -634,7 +658,7 @@ class RLTrainer:
             
             # 2.4 Save checkpoint at specified intervals
             if epoch % self.save_interval == 0:
-                checkpoint_name = f"checkpoint_epoch_{epoch}.pkl"
+                checkpoint_name = f"{self.log_prefix}_checkpoint_epoch_{epoch}.pkl"
                 self.save_model(epoch, checkpoint_name)
         
             end_time = time.time()
@@ -648,10 +672,13 @@ class RLTrainer:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or '--help' in sys.argv or '-h' in sys.argv:
-        print("Usage: python train_rl.py <epochs> [opponent_path]")
-        print("Example: python train_rl.py 100")
-        print("Example: python train_rl.py 50 ../python-algo")
-        print("Example: python train_rl.py 10 python-algo")
+        print("Usage: python train_rl.py <epochs> [opponent_path] [--log-prefix <prefix>]")
+        print("Examples:")
+        print("  python train_rl.py 100                           # Default prefix based on opponent")
+        print("  python train_rl.py 50 ../python-algo             # vs_algo prefix")
+        print("  python train_rl.py 10 python-algo-weak           # vs_weak prefix")
+        print("  python train_rl.py 20 --log-prefix custom        # Custom prefix")
+        print("  python train_rl.py 30 -p my_experiment           # Short form")
         sys.exit(0)
     
     try:
@@ -660,7 +687,23 @@ if __name__ == "__main__":
         print("Error: epochs must be an integer")
         sys.exit(1)
     
-    opponent_path = sys.argv[2] if len(sys.argv) > 2 else None
+    # Parse arguments
+    opponent_path = None
+    log_prefix = None
+    
+    i = 2
+    while i < len(sys.argv):
+        if sys.argv[i] in ['--log-prefix', '-p']:
+            if i + 1 < len(sys.argv):
+                log_prefix = sys.argv[i + 1]
+                i += 2
+            else:
+                print("Error: --log-prefix requires a value")
+                sys.exit(1)
+        else:
+            if opponent_path is None:
+                opponent_path = sys.argv[i]
+            i += 1
     
     # Get current directory (where our RL algo is)
     current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -670,7 +713,8 @@ if __name__ == "__main__":
         algo_path=current_dir,
         opponent_path=opponent_path,
         epochs=epochs,
-        save_interval=100
+        save_interval=100,
+        log_prefix=log_prefix
     )
     
     # Start training

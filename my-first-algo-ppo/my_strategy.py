@@ -223,7 +223,13 @@ class AlgoStrategy(gamelib.AlgoCore):
         try:
             log_dir = os.path.join(os.path.dirname(__file__), "logs")
             os.makedirs(log_dir, exist_ok=True)
-            turn_log_file = os.path.join(log_dir, "current_turns.jsonl")
+            
+            # Get log prefix from environment variable, default to empty
+            log_prefix = os.environ.get('RL_LOG_PREFIX', '')
+            if log_prefix:
+                turn_log_file = os.path.join(log_dir, f"{log_prefix}_current_turns.jsonl")
+            else:
+                turn_log_file = os.path.join(log_dir, "current_turns.jsonl")
             
             with open(turn_log_file, 'a') as f:
                 f.write(json.dumps(turn_data) + '\n')

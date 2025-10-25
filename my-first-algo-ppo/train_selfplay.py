@@ -16,7 +16,7 @@ from train_rl import RLTrainer
 
 class SelfPlayTrainer(RLTrainer):
     def __init__(self, algo_path, opponent_path=None, epochs=10, save_interval=10, batch_size=5, 
-                 opponent_update_interval=5, selfplay_start_epoch=3):
+                 opponent_update_interval=5, selfplay_start_epoch=3, log_prefix=None):
         """
         Initialize Self-Play RL Trainer
         
@@ -28,8 +28,9 @@ class SelfPlayTrainer(RLTrainer):
             batch_size: Number of games to train in each batch
             opponent_update_interval: Update opponent every N epochs
             selfplay_start_epoch: Start self-play from this epoch (to allow initial learning)
+            log_prefix: Prefix for log files to avoid conflicts (default: "selfplay")
         """
-        super().__init__(algo_path, opponent_path, epochs, save_interval, batch_size)
+        super().__init__(algo_path, opponent_path, epochs, save_interval, batch_size, log_prefix)
         
         # Self-play specific parameters
         self.opponent_update_interval = opponent_update_interval
@@ -243,10 +244,12 @@ class SelfPlayTrainer(RLTrainer):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or '--help' in sys.argv or '-h' in sys.argv:
-        print("Usage: python train_selfplay.py <epochs> [opponent_path]")
-        print("Example: python train_selfplay.py 20")
-        print("Example: python train_selfplay.py 50 ../python-algo")
-        print("Example: python train_selfplay.py 10 python-algo")
+        print("Usage: python train_selfplay.py <epochs> [opponent_path] [--log-prefix <prefix>]")
+        print("Examples:")
+        print("  python train_selfplay.py 100                           # Default 'selfplay' prefix")
+        print("  python train_selfplay.py 50 ../python-algo             # vs_algo prefix")
+        print("  python train_selfplay.py 20 --log-prefix custom        # Custom prefix")
+        print("  python train_selfplay.py 30 -p my_experiment           # Short form")
         sys.exit(0)
     
     try:
@@ -255,7 +258,23 @@ if __name__ == "__main__":
         print("Error: epochs must be an integer")
         sys.exit(1)
     
-    opponent_path = sys.argv[2] if len(sys.argv) > 2 else None
+    # Parse arguments
+    opponent_path = None
+    log_prefix = None
+    
+    i = 2
+    while i < len(sys.argv):
+        if sys.argv[i] in ['--log-prefix', '-p']:
+            if i + 1 < len(sys.argv):
+                log_prefix = sys.argv[i + 1]
+                i += 2
+            else:
+                print("Error: --log-prefix requires a value")
+                sys.exit(1)
+        else:
+            if opponent_path is None:
+                opponent_path = sys.argv[i]
+            i += 1
     
     # Get current directory (where our RL algo is)
     current_dir = os.path.dirname(os.path.realpath(__file__))
@@ -268,7 +287,8 @@ if __name__ == "__main__":
         save_interval=50,
         batch_size=5,                 # Correct batch size: 5 rollouts per epoch
         opponent_update_interval=10,  # Update opponent every 5 epochs
-        selfplay_start_epoch=1        # Start self-play from epoch 3
+        selfplay_start_epoch=1,       # Start self-play from epoch 1
+        log_prefix=log_prefix
     )
     
     # Start self-play training
