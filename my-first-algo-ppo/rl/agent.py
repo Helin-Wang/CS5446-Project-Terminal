@@ -395,8 +395,11 @@ class Agent:
         terminals = terminals.cpu().numpy()
         values = values.cpu().numpy()
         
-        # Scaling to reduce the range of Value Loss
-        rewards = rewards / 20.0
+        # FIXED: Use reward normalization instead of harsh scaling
+        # Clip rewards to [-50, 50] range to prevent outliers, then normalize to [-1, 1]
+        # This keeps the signal strength while preventing value explosion
+        reward_clip = 50.0
+        rewards = np.clip(rewards, -reward_clip, reward_clip) / reward_clip
         
         # Process each episode separately
         episode_start = 0

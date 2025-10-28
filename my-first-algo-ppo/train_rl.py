@@ -291,9 +291,9 @@ class RLTrainer:
                 else:
                     # Last turn: treat as terminal and use game result
                     if game_result['result'] == 'win':
-                        reward = 100.0  # Large positive reward for winning
+                        reward = 50.0  # Reasonable positive reward for winning (will be normalized to 1.0)
                     elif game_result['result'] == 'loss':
-                        reward = -100.0  # Large negative reward for losing
+                        reward = -50.0  # Reasonable negative reward for losing (will be normalized to -1.0)
                     else:  # draw
                         reward = 0.0
                     
