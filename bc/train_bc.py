@@ -147,6 +147,9 @@ def main():
     best_val_loss = float('inf')
     epochs_no_improve = 0
     best_path = os.path.join(savedir, 'bc_pretrain.pt')
+    
+    # Also save to my-first-algo-ppo/rl_model.pkl for PPO training
+    rl_model_path = os.path.join(repo_root, 'my-first-algo-ppo', 'rl_model.pkl')
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, device, optimizer, criterion)
@@ -163,8 +166,24 @@ def main():
         if val_loss + 1e-6 < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
+            # Save in BC format (minimal)
             torch.save({'model_state_dict': model.state_dict()}, best_path)
+            
+            # Also save in Agent-compatible format for PPO training
+            # This matches the format expected by Agent.load_model()
+            save_data = {
+                'model_state_dict': model.state_dict(),
+                'board_channels': 5,
+                'scalar_dim': 7,
+                'action_dim': 8,
+                'hidden_dim': 128,
+                'steps': 0,
+                'episodes': 0
+            }
+            os.makedirs(os.path.dirname(rl_model_path), exist_ok=True)
+            torch.save(save_data, rl_model_path)
             print(f"Saved best model to {best_path}")
+            print(f"Also saved to {rl_model_path} for PPO training")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= args.patience:
@@ -173,6 +192,8 @@ def main():
 
     writer.close()
     print("BC pretraining finished.")
+    print(f"Best model available at: {best_path}")
+    print(f"PPO-ready model available at: {rl_model_path}")
 
 
 if __name__ == '__main__':
