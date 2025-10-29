@@ -113,6 +113,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--lr', type=float, default=3e-4)
     parser.add_argument('--patience', type=int, default=5, help='Early stopping patience on val loss')
+    parser.add_argument('--label-smoothing', type=float, default=0.2, help='Label smoothing factor for BC cross-entropy')
     parser.add_argument('--logdir', type=str, default=None, help='TensorBoard log directory (default: ../my-first-algo-ppo/logs/bc)')
     parser.add_argument('--savedir', type=str, default=None, help='Directory to save best model (default: bc/checkpoints)')
     args = parser.parse_args()
@@ -139,8 +140,8 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = CNNPPONetwork(board_channels=5, scalar_dim=7, action_dim=8, hidden_dim=128).to(device)
 
-    # Loss only on actor logits (critic ignored in BC)
-    criterion = nn.CrossEntropyLoss()
+    # Loss only on actor logits (critic ignored in BC) with label smoothing
+    criterion = nn.CrossEntropyLoss(label_smoothing=max(0.0, min(0.99, args.label_smoothing)))
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     writer = SummaryWriter(logdir)
