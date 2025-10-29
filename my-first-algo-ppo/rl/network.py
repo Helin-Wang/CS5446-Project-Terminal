@@ -116,6 +116,20 @@ class CNNPPONetwork(nn.Module):
         
         return action_logits, value
     
+    def get_action_logits(self, board_tensor, scalar_tensor):
+        """
+        Get action logits for behavior cloning training
+        
+        Args:
+            board_tensor: Board tensor of shape (batch_size, board_channels, 28, 28)
+            scalar_tensor: Scalar tensor of shape (batch_size, scalar_dim)
+            
+        Returns:
+            action_logits: Action logits of shape (batch_size, action_dim)
+        """
+        action_logits, _ = self.forward(board_tensor, scalar_tensor)
+        return action_logits
+    
     def get_action(self, board_tensor, scalar_tensor, deterministic=False):
         """
         Sample action from the policy
