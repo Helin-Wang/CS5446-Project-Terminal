@@ -37,7 +37,20 @@ for i in $(seq 1 $NUM_EPISODES); do
     # Run match: collector vs python-algo
     cd "$PARENT_DIR"
     echo "$PARENT_DIR"
-    python scripts/run_match.py "$COLLECTOR_DIR" "$ALGO_DIR"
+    LOG_FILE="$OUTPUT_DIR/episode_${i}.log"
+    # Capture full output for winner parsing
+    python scripts/run_match.py "$COLLECTOR_DIR" "$ALGO_DIR" > "$LOG_FILE" 2>&1 || true
+    
+    # Compute rewards for this episode's turns jsonl
+    JSONL_FILE="$OUTPUT_DIR/episode_${i}_turns.jsonl"
+    if [ -f "$JSONL_FILE" ]; then
+        echo "Computing rewards for $JSONL_FILE"
+        python bc/compute_rewards.py --jsonl "$JSONL_FILE" --engine-log "$LOG_FILE" || {
+            echo "Warning: reward computation failed for episode $i";
+        }
+    else
+        echo "Warning: missing turn log $JSONL_FILE"
+    fi
     
     echo "Episode $i completed"
     echo ""

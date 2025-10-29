@@ -54,6 +54,13 @@ class ExpertCollectorStrategy(gamelib.AlgoCore):
         self.output_dir = os.environ.get('BC_OUTPUT_DIR', os.path.join(os.path.dirname(__file__), 'bc_data'))
         os.makedirs(self.output_dir, exist_ok=True)
     
+        # Combat data tracking (similar to my_strategy.py)
+        self.current_turn_combat_data = {
+            'damage_dealt': 0.0,
+            'damage_received': 0.0,
+            'events': {}
+        }
+    
     def on_game_start(self, config):
         """ Initialize strategy with config """
         self.config = config
@@ -87,90 +94,115 @@ class ExpertCollectorStrategy(gamelib.AlgoCore):
         gamelib.debug_write(f'Expert Collector: Turn {game_state.turn_number}')
         game_state.suppress_warnings(True)
     
+        # Build state representation
         board_tensor, scalar_tensor = self.state_builder.build_state(game_state)
+        
+        # Get expert action
         expert_action = self._get_expert_action(game_state)
             
+        # Create transition data matching PPO format for later reward calculation
         transition = {
+            'turn_num': game_state.turn_number,
             'state': {
-                'board': board_tensor.numpy(),
-                'scalar': scalar_tensor.numpy()
+                'board': board_tensor.tolist(),  # Convert to list for JSON serialization
+                'scalar': scalar_tensor.tolist()
             },
             'action': expert_action,
-            'turn': game_state.turn_number,
             'hp': game_state.my_health,
             'enemy_hp': game_state.enemy_health,
             'mp': game_state.get_resource(MP),
-            'sp': game_state.get_resource(SP)
+            'sp': game_state.get_resource(SP),
+            'damage_dealt': self.current_turn_combat_data.get('damage_dealt', 0.0),
+            'damage_received': self.current_turn_combat_data.get('damage_received', 0.0),
+            'reward': 0.0,  # Will be calculated later
+            'terminal': False,
+            'log_prob': 0.0,  # Not needed for BC
+            'value': 0.0  # Not needed for BC
         }
         
         # Add to current episode
         self.current_episode.append(transition)
         
-        # Save transition immediately to prevent data loss
-        self._save_transition(transition, game_state.turn_number)
+        # Log turn data immediately to prevent data loss
+        self._log_turn_data(transition)
+        
+        # Reset combat data for next turn
+        self.current_turn_combat_data = {
+            'damage_dealt': 0.0,
+            'damage_received': 0.0,
+            'events': {}
+        }
         
         self._execute_expert_action(game_state, expert_action)
         gamelib.debug_write(f'Expert Collector: Action={expert_action}, Turn={game_state.turn_number}')
         game_state.submit_turn()
     
     def on_action_frame(self, turn_string):
-        """ Track breaches for reactive defense """
+        """ Track breaches for reactive defense and accumulate combat data """
         try:
             state = json.loads(turn_string)
             events = state.get("events", {})
-            breaches = events.get("breach", [])
             
+            # Track breaches
+            breaches = events.get("breach", [])
             for breach in breaches:
                 location = breach[0]
                 unit_owner_self = True if breach[4] == 1 else False
-                # When parsing the frame data directly, 
-                # 1 is integer for yourself, 2 is opponent (StarterKit code uses 0, 1 as player_index instead)
                 if not unit_owner_self:
                     gamelib.debug_write("Got scored on at: {}".format(location))
                     self.scored_on_locations.append(location)
-                    gamelib.debug_write("All locations: {}".format(self.scored_on_locations))
+            
+            # Accumulate combat data (similar to my_strategy.py)
+            if hasattr(self, 'current_turn_combat_data'):
+                self._accumulate_combat_data(events)
+                
         except Exception as e:
             gamelib.debug_write(f"Error in on_action_frame: {e}")
     
-    def _save_transition(self, transition, turn_number):
-        """ Save a single transition to a file immediately """
+    def _accumulate_combat_data(self, events):
+        """Accumulate damage data from action frame events"""
+        damage_dealt_this_frame = 0.0
+        damage_received_this_frame = 0.0
+        
+        # Process damage events
+        for damage_event in events.get('damage', []):
+            location, damage_amount, unit_type, unit_id, player_index = damage_event
+            
+            if player_index == 2:  # Enemy takes damage (we dealt damage)
+                damage_dealt_this_frame += damage_amount
+            elif player_index == 1:  # We take damage
+                damage_received_this_frame += damage_amount
+        
+        # Update cumulative damage (last frame has the complete turn damage)
+        self.current_turn_combat_data['damage_dealt'] = damage_dealt_this_frame
+        self.current_turn_combat_data['damage_received'] = damage_received_this_frame
+    
+    def _log_turn_data(self, turn_data):
+        """
+        Log turn data to jsonl file immediately
+        This matches the format used by my_strategy.py
+        """
         try:
-            # Create a unique filename for this transition
-            filename = f"episode_{self.episode_num}_turn_{turn_number}.pkl"
+            # Create filename: episode_{episode_num}_turns.jsonl
+            filename = f"episode_{self.episode_num}_turns.jsonl"
             filepath = os.path.join(self.output_dir, filename)
             
-            # Save the transition
-            with open(filepath, 'wb') as f:
-                pickle.dump(transition, f)
+            # Append to file (creates new file if doesn't exist)
+            with open(filepath, 'a') as f:
+                f.write(json.dumps(turn_data) + '\n')
             
-            gamelib.debug_write(f"Saved transition: episode_{self.episode_num}, turn {turn_number}")
+            gamelib.debug_write(f"Logged turn {turn_data['turn_num']} for episode {self.episode_num}")
         except Exception as e:
-            gamelib.debug_write(f"Error saving transition: {e}")
+            gamelib.debug_write(f"Error logging turn data: {e}")
     
     def save_episode(self):
-        """ Save current episode data to file """
-        if len(self.current_episode) == 0:
-            gamelib.debug_write("No data to save for this episode (episode_num={})".format(self.episode_num))
-            return
-        
-        episode_file = os.path.join(self.output_dir, f"episode_{self.episode_num}.pkl")
-        gamelib.debug_write(f"Saving episode {self.episode_num} to {episode_file}")
-        
-        # Prepare episode data in format suitable for training
-        episode_data = {
-            'states': [transition['state'] for transition in self.current_episode],
-            'actions': [transition['action'] for transition in self.current_episode],
-            'turns': [transition['turn'] for transition in self.current_episode],
-            'hp': [transition['hp'] for transition in self.current_episode],
-            'enemy_hp': [transition['enemy_hp'] for transition in self.current_episode],
-        }
-        
-        with open(episode_file, 'wb') as f:
-            pickle.dump(episode_data, f)
-        
-        gamelib.debug_write(f"Saved episode {self.episode_num} with {len(self.current_episode)} transitions to {episode_file}")
-        
-        # Reset for next episode
+        """No-op: reward calculation is handled offline by compute_rewards.py.
+        We only log turns to jsonl during the match.
+        """
+        gamelib.debug_write(
+            f"save_episode called for episode {self.episode_num} - rewards are computed by bc/compute_rewards.py"
+        )
+        # Reset for next episode bookkeeping
         self.current_episode = []
         self.scored_on_locations = []
     
